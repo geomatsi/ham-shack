@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>WSJT-X QTH Map</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: Arial, sans-serif;
+    }
+    #topbar {
+      padding: 8px;
+      background: #f0f0f0;
+      border-bottom: 1px solid #ccc;
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+    #map {
+      width: 100%;
+      height: calc(100% - 50px);
+    }
+  </style>
+</head>
+<body>
+
+<div id="topbar">
+  <input type="file" id="fileInput" accept=".txt,.log">
+  <label>
+    <input type="checkbox" id="cqOnly">
+    Show CQ only
+  </label>
+  <span id="status"></span>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+  // ---------- MAP ----------
+  const map = L.map('map').setView([20, 0], 2);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  const markersLayer = L.layerGroup().addTo(map);
+
+  // ---------- DATA ----------
+  let records = []; // parsed log entries
+
+  // ---------- MAIDENHEAD (4-char) ----------
+  function maidenheadToLatLon(grid) {
+    const A = 'A'.charCodeAt(0);
+    const lon = (grid.charCodeAt(0) - A) * 20 + parseInt(grid[2]) * 2 - 180 + 1;
+    const lat = (grid.charCodeAt(1) - A) * 10 + parseInt(grid[3]) - 90 + 0.5;
+    return [lat, lon];
+  }
+
+  // ---------- FILE LOAD ----------
+  document.getElementById('fileInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      records = parseLog(reader.result);
+      updateMap();
+    };
+    reader.readAsText(file);
+  });
+
+  document.getElementById('cqOnly').addEventListener('change', updateMap);
+
+  // ---------- PARSER ----------
+  function parseLog(text) {
+    const NON_LOCATORS = new Set(["RR73", "RRR", "73"]);
+    const lines = text.split(/\r?\n/);
+    const out = [];
+
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 4) continue;
+
+      const locator = parts[parts.length - 1];
+
+      // Valid 4-char Maidenhead only
+      if (!/^[A-R]{2}\d{2}$/.test(locator) || NON_LOCATORS.has(locator)) {
+        continue;
+      }
+
+      const station = parts[parts.length - 2];
+      const isCQ = parts.includes("CQ");
+
+      // sanity check for callsign-like token
+      if (!/^[A-Z0-9\/<>]+$/.test(station)) continue;
+
+      out.push({
+        station,
+        locator,
+        isCQ
+      });
+    }
+
+    return out;
+  }
+
+  // ---------- MAP UPDATE ----------
+  function updateMap() {
+    markersLayer.clearLayers();
+
+    const cqOnly = document.getElementById('cqOnly').checked;
+    const grouped = {}; // locator -> Set of stations
+
+    for (const r of records) {
+      if (cqOnly && !r.isCQ) continue;
+
+      if (!grouped[r.locator]) grouped[r.locator] = new Set();
+      grouped[r.locator].add(r.station);
+    }
+
+    let markerCount = 0;
+
+    for (const locator in grouped) {
+      const stations = [...grouped[locator]];
+      const [lat, lon] = maidenheadToLatLon(locator);
+
+      const popupHtml = `
+        <b>QTH:</b> ${locator}<br>
+        <b>Stations:</b><br>
+        ${stations.join("<br>")}
+      `;
+
+      L.circleMarker([lat, lon], {
+        radius: 5,
+        color: cqOnly ? "blue" : "red",
+        fillOpacity: 0.7
+      })
+      .bindPopup(popupHtml)
+      .addTo(markersLayer);
+
+      markerCount++;
+    }
+
+    document.getElementById('status').textContent =
+      `QTH shown: ${markerCount}`;
+  }
+</script>
+
+</body>
+</html>
