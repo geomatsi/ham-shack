@@ -1,43 +1,43 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>WSJT-X QTH Map</title>
+<meta charset="UTF-8">
+<title>FT8 / WSPR Map</title>
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+<link rel="stylesheet"
+href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
-  <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      font-family: Arial, sans-serif;
-    }
-    #topbar {
-      padding: 8px;
-      background: #f0f0f0;
-      border-bottom: 1px solid #ccc;
-      display: flex;
-      gap: 15px;
-      align-items: center;
-    }
-    #map {
-      width: 100%;
-      height: calc(100% - 50px);
-    }
-  </style>
+<style>
+html,body{
+  margin:0;
+  height:100%;
+  font-family:Arial;
+}
+
+#topbar{
+  padding:8px;
+  background:#f0f0f0;
+  border-bottom:1px solid #ccc;
+  display:flex;
+  gap:15px;
+  align-items:center;
+}
+
+#map{
+  width:100%;
+  height:calc(100% - 50px);
+}
+</style>
 </head>
 <body>
 
 <div id="topbar">
-  <input type="file" id="fileInput" accept=".txt,.log">
-  <label>
-    <input type="checkbox" id="cqOnly">
-    Show CQ only
-  </label>
-  <span id="status"></span>
+<input type="file" id="fileInput">
+<label>
+<input type="checkbox" id="cqOnly">
+Show CQ only
+</label>
+<span id="status"></span>
 </div>
 
 <div id="map"></div>
@@ -45,116 +45,270 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-  // ---------- MAP ----------
-  const map = L.map('map').setView([20, 0], 2);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-    attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
+// ---------- MAP ----------
 
-  const markersLayer = L.layerGroup().addTo(map);
+const map = L.map('map').setView([20,0],2);
 
-  // ---------- DATA ----------
-  let records = []; // parsed log entries
+L.tileLayer(
+'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+{
+  maxZoom:18,
+  attribution:'© OpenStreetMap contributors'
+}).addTo(map);
 
-  // ---------- MAIDENHEAD (4-char) ----------
-  function maidenheadToLatLon(grid) {
-    const A = 'A'.charCodeAt(0);
-    const lon = (grid.charCodeAt(0) - A) * 20 + parseInt(grid[2]) * 2 - 180 + 1;
-    const lat = (grid.charCodeAt(1) - A) * 10 + parseInt(grid[3]) - 90 + 0.5;
-    return [lat, lon];
+const markersLayer = L.layerGroup().addTo(map);
+
+let records = [];
+
+// ---------- GRID → LAT/LON ----------
+
+function maidenheadToLatLon(grid){
+
+  const A='A'.charCodeAt(0);
+
+  const lon =
+  (grid.charCodeAt(0)-A)*20 +
+  parseInt(grid[2])*2 -
+  180 + 1;
+
+  const lat =
+  (grid.charCodeAt(1)-A)*10 +
+  parseInt(grid[3]) -
+  90 + 0.5;
+
+  return [lat,lon];
+}
+
+// ---------- FILE LOAD ----------
+
+document.getElementById('fileInput')
+.addEventListener('change',e=>{
+
+  const file=e.target.files[0];
+  if(!file) return;
+
+  const reader=new FileReader();
+
+  reader.onload=()=>{
+    records=parseLog(reader.result);
+    updateMap();
+  };
+
+  reader.readAsText(file);
+
+});
+
+document.getElementById('cqOnly')
+.addEventListener('change',updateMap);
+
+// ---------- MAIN PARSER ----------
+
+function parseLog(text){
+
+  const lines=text.split(/\r?\n/);
+  const out=[];
+
+  for(const line of lines){
+
+    if(!line.trim()) continue;
+
+    if(line.includes("FT8")){
+      const r=parseFT8(line);
+      if(r) out.push(r);
+    }
+    else{
+      const r=parseWSPR(line);
+      if(r) out.push(r);
+    }
+
   }
 
-  // ---------- FILE LOAD ----------
-  document.getElementById('fileInput').addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (!file) return;
+  return out;
+}
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      records = parseLog(reader.result);
-      updateMap();
-    };
-    reader.readAsText(file);
-  });
+// ---------- FT8 PARSER ----------
 
-  document.getElementById('cqOnly').addEventListener('change', updateMap);
+function parseFT8(line){
 
-  // ---------- PARSER ----------
-  function parseLog(text) {
-    const NON_LOCATORS = new Set(["RR73", "RRR", "73"]);
-    const lines = text.split(/\r?\n/);
-    const out = [];
+  const NON_LOCATORS=new Set(["RR73","RRR","73"]);
 
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length < 4) continue;
+  const parts=line.trim().split(/\s+/);
 
-      const locator = parts[parts.length - 1];
+  if(parts.length<4) return null;
 
-      // Valid 4-char Maidenhead only
-      if (!/^[A-R]{2}\d{2}$/.test(locator) || NON_LOCATORS.has(locator)) {
-        continue;
-      }
+  const locator=parts[parts.length-1];
 
-      const station = parts[parts.length - 2];
-      const isCQ = parts.includes("CQ");
+  if(!/^[A-R]{2}\d{2}$/.test(locator)) return null;
+  if(NON_LOCATORS.has(locator)) return null;
 
-      // sanity check for callsign-like token
-      if (!/^[A-Z0-9\/<>]+$/.test(station)) continue;
+  const station=parts[parts.length-2];
+  const isCQ=parts.includes("CQ");
 
-      out.push({
+  if(!/^[A-Z0-9\/<>]+$/.test(station)) return null;
+
+  return {
+    type: "FT8",
+    station,
+    locator,
+    isCQ,
+    isSuspicious: false,
+  };
+
+}
+
+// ---------- WSPR PARSER ----------
+
+function parseWSPR(line) {
+
+    const parts = line.trim().split(/\s+/);
+
+    if (parts.length < 7) return null;
+
+    const snr = parseFloat(parts[2]);
+    const dt = parseFloat(parts[3]);
+    const freq = parseFloat(parts[4]);
+    const station = parts[5];
+    const locator = parts[6];
+    const power = parseInt(parts[7]);
+    const drift = parseFloat(parts[8]);
+
+    if(!/^[A-R]{2}\d{2}$/.test(locator)) return null;
+    if(!/^[A-Z0-9\/]+$/.test(station)) return null;
+
+    let record = {
+        type: "WSPR",
         station,
         locator,
-        isCQ
-      });
+        isCQ: false,
+        isSuspicious: false,
+    };
+
+    // TODO: check validity of the WSPR record in WSJT-X log
+    // - the following simple check suggested by ChatGPT does not work well
+    if (
+        snr < -30 ||
+        Math.abs(dt) > 1.5 ||
+        Math.abs(drift) > 4
+    ) {
+        record.isSuspicious = true;
     }
 
-    return out;
+    return record;
+}
+
+// ---------- MARK COLOR ----------
+
+function getMarkerColor(group) {
+
+    if (group.type === "WSPR") {
+
+        if (group.hasSuspicious) {
+            return "red";
+        }
+
+        return "green";
+    }
+
+    if (group.type === "FT8") {
+
+        if (group.hasCQ) {
+            return "blue";
+        }
+
+        return "green";
+    }
+
+    return "gray";
+}
+
+// ---------- MAP UPDATE ----------
+
+function updateMap(){
+
+  markersLayer.clearLayers();
+
+  const cqOnly= document.getElementById('cqOnly').checked;
+
+  const grouped={};
+
+  for(const r of records) {
+
+    if(cqOnly && !r.isCQ) continue;
+
+    if(!grouped[r.locator]){
+      grouped[r.locator]={
+        type: r.type,
+        stations:new Set(),
+        hasSuspicious:false,
+        hasCQ:false
+      };
+    }
+
+    if (r.type === "FT8") {
+        // Use a <span> with color if CQ
+	if (r.isCQ) {
+        	const stationHtml = `<span style="color:blue">${r.station}</span>`;
+        	grouped[r.locator].stations.add(stationHtml);
+	} else {
+        	grouped[r.locator].stations.add(r.station);
+	}
+    }
+
+    if (r.type === "WSPR") {
+        // Use a <span> with color if suspicious
+	if (r.isSuspicious) {
+        	const stationHtml = `<span style="color:red">${r.station}</span>`;
+        	grouped[r.locator].stations.add(stationHtml);
+	} else {
+        	grouped[r.locator].stations.add(r.station);
+	}
+    }
+
+    if(r.isCQ)
+      grouped[r.locator].hasCQ=true;
+
+    if(r.isSuspicious)
+      grouped[r.locator].hasSuspicious=true;
+
   }
 
-  // ---------- MAP UPDATE ----------
-  function updateMap() {
-    markersLayer.clearLayers();
+  let markerCount=0;
 
-    const cqOnly = document.getElementById('cqOnly').checked;
-    const grouped = {}; // locator -> Set of stations
+  for(const locator in grouped){
 
-    for (const r of records) {
-      if (cqOnly && !r.isCQ) continue;
+    const data=grouped[locator];
 
-      if (!grouped[r.locator]) grouped[r.locator] = new Set();
-      grouped[r.locator].add(r.station);
-    }
+    const stations=[...data.stations];
 
-    let markerCount = 0;
+    const [lat,lon]=
+    maidenheadToLatLon(locator);
 
-    for (const locator in grouped) {
-      const stations = [...grouped[locator]];
-      const [lat, lon] = maidenheadToLatLon(locator);
+    const popup=`
+      <b>QTH:</b> ${locator}<br>
+      <b>Stations:</b><br>
+      ${stations.join("<br>")}
+    `;
 
-      const popupHtml = `
-        <b>QTH:</b> ${locator}<br>
-        <b>Stations:</b><br>
-        ${stations.join("<br>")}
-      `;
+    const color = getMarkerColor(data);
 
-      L.circleMarker([lat, lon], {
-        radius: 5,
-        color: cqOnly ? "blue" : "red",
-        fillOpacity: 0.7
-      })
-      .bindPopup(popupHtml)
-      .addTo(markersLayer);
+    L.circleMarker([lat,lon],{
+      radius:5,
+      color:color,
+      fillOpacity:0.7
+    })
+    .bindPopup(popup)
+    .addTo(markersLayer);
 
-      markerCount++;
-    }
+    markerCount++;
 
-    document.getElementById('status').textContent =
-      `QTH shown: ${markerCount}`;
   }
+
+  document.getElementById('status').textContent =
+  `QTH shown: ${markerCount}`;
+
+}
+
 </script>
-
 </body>
 </html>
