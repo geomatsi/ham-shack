@@ -18,11 +18,11 @@ Simple SI5351-based signal generator firmware for the STM32F103 Blue Pill with:
 | LCD data `D5` | `PA10` | HD44780 data |
 | LCD data `D6` | `PA11` | HD44780 data |
 | LCD data `D7` | `PA12` | HD44780 data |
-| Encoder `CLK` | `PB10` | rotary encoder |
-| Encoder `DT` | `PB11` | rotary encoder |
-| Encoder button | `PB1` | active low |
-| SI5351 `SCL` | `PB13` | bit-banged I2C |
-| SI5351 `SDA` | `PB12` | bit-banged I2C |
+| Encoder `CLK` | `PA0` | rotary encoder |
+| Encoder `DT` | `PA1` | rotary encoder |
+| Encoder button | `PA2` | active low |
+| SI5351 `SCL` | `PB12` | bit-banged I2C |
+| SI5351 `SDA` | `PB13` | bit-banged I2C |
 
 ## UI HOWTO
 

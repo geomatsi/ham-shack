@@ -333,13 +333,13 @@ fn main() -> ! {
     )
     .unwrap();
 
-    let rotary_clk = gpiob.pb10.into_pull_up_input(&mut gpiob.crh);
-    let rotary_dt = gpiob.pb11.into_pull_up_input(&mut gpiob.crh);
-    let button = gpiob.pb1.into_pull_up_input(&mut gpiob.crl);
+    let button = gpioa.pa2.into_pull_up_input(&mut gpioa.crl);
+    let rotary_dt = gpioa.pa1.into_pull_up_input(&mut gpioa.crl);
+    let rotary_clk = gpioa.pa0.into_pull_up_input(&mut gpioa.crl);
     let mut encoder = RotaryEncoder::new(rotary_dt, rotary_clk).into_standard_mode();
 
-    let scl = gpiob.pb13.into_open_drain_output(&mut gpiob.crh);
-    let sda = gpiob.pb12.into_open_drain_output(&mut gpiob.crh);
+    let scl = gpiob.pb12.into_open_drain_output(&mut gpiob.crh);
+    let sda = gpiob.pb13.into_open_drain_output(&mut gpiob.crh);
     let mut i2c_timer = dp.TIM2.counter_hz(&mut rcc);
     i2c_timer.start(200.kHz()).unwrap();
     let i2c = I2cBB::new(scl, sda, i2c_timer);
