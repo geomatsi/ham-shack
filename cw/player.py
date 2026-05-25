@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 import sounddevice as sd
 import sys
+import wave
 
 MORSE = {
     # Letters
@@ -79,9 +80,16 @@ def play_morse(text, cw):
     # shutdown silence
     audio.append(silence(0.5, cw.samplerate))  # 500 ms
 
-    wave = np.concatenate(audio)
-    sd.play(wave, cw.samplerate)
-    sd.wait()
+    wave_data = np.concatenate(audio)
+    if cw.output:
+        with wave.open(cw.output, 'w') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(cw.samplerate)
+            wf.writeframes((wave_data * 32767).astype(np.int16).tobytes())
+    else:
+        sd.play(wave_data, cw.samplerate)
+        sd.wait()
 
 def create_parser():
     """ Parse command line arguments """
@@ -95,6 +103,8 @@ def create_parser():
                         required=False, dest='freq', help='cw tone frequency')
     parser.add_argument('-r', '--rate', action='store', type=int, default=44100,
                         required=False, dest='samplerate', help='audio sample rate')
+    parser.add_argument('-o', '--output', action='store', type=str, default=None,
+                        required=False, dest='output', help='output wav file')
 
     parser.add_argument(
         "file",
