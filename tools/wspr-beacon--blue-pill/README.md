@@ -11,8 +11,18 @@ cargo build --bin beacon
 # Build (release)
 cargo build --bin beacon --release
 
-# Flash via probe-rs
-probe-rs run --chip STM32F103C8Tx target/thumbv7m-none-eabi/release/beacon
+The project uses `.cargo/config.toml` with a `probe-rs run` target runner for
+`thumbv7m-none-eabi`, so the default happy path is:
+
+```bash
+$ cargo run --bin <binary name>
+```
+
+Flash-only with probe-rs tools:
+
+```bash
+$ cargo flash --release --chip STM32F103C8 --bin <binary name>
+```
 
 # Clean
 cargo clean

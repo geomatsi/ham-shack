@@ -2,9 +2,8 @@
 target = "thumbv7m-none-eabi"
 
 [target.thumbv7m-none-eabi]
-rustflags = [
-    "-C", "link-arg=-Tlink.x",
-]
+rustflags = [ "-C", "link-arg=-Tlink.x" ]
+runner = "probe-rs run --chip STM32F103C8"
 
 [unstable]
 build-std = ["core"]
