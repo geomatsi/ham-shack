@@ -3,17 +3,18 @@
 
 use cortex_m_rt::entry;
 use stm32f1xx_hal::{
-    pac::{self, USART3, interrupt},
+    dma::CircBuffer,
+    pac::{self, DMA1, USART3, interrupt},
     prelude::*,
-    rcc,
-    serial::Rx,
+    rcc, serial,
 };
 
 use panic_rtt_target as _;
-use rtt_target::{rprint, rprintln, rtt_init_print};
+use rtt_target::{rprint, rtt_init_print};
 
 use core::cell::RefCell;
 use cortex_m::interrupt::{Mutex, free as interrupt_free};
+use cortex_m::singleton;
 
 // Neo-7M sends a groups of up to 12 msgs at once:
 //
@@ -33,10 +34,8 @@ use cortex_m::interrupt::{Mutex, free as interrupt_free};
 // So pre-allocate enough space to keep all messages
 const NMEA_LEN: usize = 2048;
 
-static WIDX: Mutex<RefCell<usize>> = Mutex::new(RefCell::new(0));
-static NMEA: Mutex<RefCell<[u8; NMEA_LEN]>> = Mutex::new(RefCell::new([0; NMEA_LEN]));
-
-static RX: Mutex<RefCell<Option<Rx<USART3>>>> = Mutex::new(RefCell::new(None));
+static CB: Mutex<RefCell<Option<CircBuffer<[u8; NMEA_LEN], serial::RxDma3>>>> =
+    Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -51,6 +50,7 @@ fn main() -> ! {
 
     let mut afio = dp.AFIO.constrain(&mut rcc);
     let mut gpiob = dp.GPIOB.split(&mut rcc);
+    let channels = dp.DMA1.split(&mut rcc);
 
     let tx = gpiob.pb10.into_alternate_open_drain(&mut gpiob.crh);
     let rx = gpiob.pb11;
@@ -61,11 +61,15 @@ fn main() -> ! {
         .serial((tx, rx), 9600.bps(), &mut rcc)
         .split();
 
-    rx.listen();
+    // setup serial 'idle' interrupt before converting rx into rxdma
     rx.listen_idle();
 
+    let nmea = singleton!(: [[u8; NMEA_LEN]; 2] = [[0; NMEA_LEN]; 2]).unwrap();
+    let rxdma = rx.with_dma(channels.3);
+
     interrupt_free(|cs| {
-        RX.borrow(cs).replace(Some(rx));
+        let circ = rxdma.circ_read(nmea);
+        CB.borrow(cs).replace(Some(circ));
     });
 
     unsafe {
@@ -80,28 +84,27 @@ fn main() -> ! {
 #[interrupt]
 fn USART3() {
     interrupt_free(|cs| {
-        let mut rx = RX.borrow(cs).borrow_mut();
-        if let Some(rx) = rx.as_mut() {
-            if rx.is_rx_not_empty() {
-                if let Ok(w) = nb::block!(rx.read()) {
-                    let mut widx = WIDX.borrow(cs).borrow_mut();
+        // Note: rx is 'moved' on rx.with_dma, so we can not use rx anymore.
+        // IIUC there is no legitimate way to use rx.is_idle together with rxdma in current stm32f1xx HAL code.
+        // For now just use direct unsafe access to USART3 and DMA1 regs to check interrupt status and transferred bytes.
+        let usart3 = unsafe { &*USART3::ptr() };
+        if usart3.sr().read().idle().bit_is_set() {
+            // clear flag — read SR then DR sequence
+            usart3.sr().read();
+            usart3.dr().read();
 
-                    if *widx < NMEA_LEN - 1 {
-                        NMEA.borrow(cs).borrow_mut()[*widx] = w;
-                        *widx += 1;
-                    } else {
-                        rprintln!("NMEA buffer overflow");
-                    }
-                }
-                rx.listen_idle();
-            } else if rx.is_idle() {
-                rx.unlisten_idle();
-                let mut widx = WIDX.borrow(cs).borrow_mut();
-                for i in 0..*widx {
-                    let b = NMEA.borrow(cs).borrow_mut()[i];
-                    rprint!("{}", b as char);
-                }
-                *widx = 0;
+            if let Some(circ) = CB.borrow(cs).take() {
+                let (buf, rxdma) = circ.stop();
+                let recv = (NMEA_LEN * 2)
+                    - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
+
+                buf[0][..recv]
+                    .iter()
+                    .for_each(|&b| rprint!("{}", b as char));
+                buf[0].fill(0);
+
+                let circ = rxdma.circ_read(buf);
+                CB.borrow(cs).replace(Some(circ));
             }
         }
     })
