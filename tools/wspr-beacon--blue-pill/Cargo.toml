@@ -15,6 +15,9 @@ cortex-m-semihosting = "0.5.0"
 panic-halt = "0.2"
 panic-semihosting = "0.6.0"
 
+panic-rtt-target = "0.2.0"
+rtt-target = "0.6.2"
+
 nb = "1.1"
 stm32f1xx-hal = { version = "0.11", features = ["stm32f103", "medium"] }
 
@@ -34,3 +37,23 @@ debug = true
 [[example]]
 name = "led-test1"
 path = "examples/led-test1.rs"
+
+[[example]]
+name = "lcd-test1"
+path = "examples/lcd-test1.rs"
+
+[[example]]
+name = "lcd-test2"
+path = "examples/lcd-test2.rs"
+
+[[example]]
+name = "gen-test1"
+path = "examples/gen-test1.rs"
+
+[[example]]
+name = "gps-test1"
+path = "examples/gps-test1.rs"
+
+[[example]]
+name = "gps-test2"
+path = "examples/gps-test2.rs"
