@@ -24,6 +24,12 @@ Flash-only with probe-rs tools:
 $ cargo flash --release --chip STM32F103C8 --bin <binary name>
 ```
 
+Attach RTT log monitor to the running binary:
+
+```bash
+$ probe-rs attach --chip STM32F103C8 target/thumbv7m-none-eabi/debug/examples/led-test1
+```
+
 # Clean
 cargo clean
 ```

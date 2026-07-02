@@ -11,7 +11,7 @@ use embedded_graphics::{
 };
 use hal::prelude::*;
 use nb::block;
-use panic_semihosting as _;
+use panic_rtt_target as _;
 use ssd1306::{I2CDisplayInterface, Ssd1306, prelude::*};
 use stm32f1xx_hal as hal;
 use stm32f1xx_hal::pac;

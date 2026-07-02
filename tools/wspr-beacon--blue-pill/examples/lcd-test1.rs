@@ -5,7 +5,8 @@ use bitbang_hal::i2c::I2cBB;
 use core::fmt::Write;
 use cortex_m_rt::entry;
 use hal::prelude::*;
-use panic_semihosting as _;
+use panic_rtt_target as _;
+use rtt_target::{rprintln, rtt_init_print};
 use ssd1306::{I2CDisplayInterface, Ssd1306, prelude::*};
 use stm32f1xx_hal as hal;
 use stm32f1xx_hal::pac;
@@ -20,6 +21,8 @@ fn main() -> ! {
         rcc::Config::hse(8.MHz()).sysclk(32.MHz()).pclk1(16.MHz()),
         &mut flash.acr,
     );
+
+    rtt_init_print!();
 
     let mut gpioa = dp.GPIOA.split(&mut rcc);
 
@@ -38,11 +41,16 @@ fn main() -> ! {
 
     /* Endless loop */
     loop {
+        rprintln!("test #1");
+
         for c in 97..123 {
             let buf = [c];
             let s = core::str::from_utf8(&buf).unwrap();
             let _ = display.write_str(s);
         }
+
+        rprintln!("test #2");
+
         for c in 65..91 {
             let buf = [c];
             let s = core::str::from_utf8(&buf).unwrap();
