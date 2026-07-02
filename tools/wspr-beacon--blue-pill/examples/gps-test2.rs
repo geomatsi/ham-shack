@@ -31,7 +31,7 @@ fn main() -> ! {
     interrupt_free(|cs| {
         let mut pps = gpiob.pb1.into_floating_input(&mut gpiob.crl);
         pps.make_interrupt_source(&mut afio);
-        pps.trigger_on_edge(&mut dp.EXTI, Edge::RisingFalling);
+        pps.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         pps.enable_interrupt(&mut dp.EXTI);
         PPS.borrow(cs).replace(Some(pps));
     });
