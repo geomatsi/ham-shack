@@ -10,11 +10,14 @@ use stm32f1xx_hal::{
 };
 
 use panic_rtt_target as _;
-use rtt_target::{rprint, rtt_init_print};
+use rtt_target::{rprintln, rtt_init_print};
 
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 use cortex_m::interrupt::{Mutex, free as interrupt_free};
 use cortex_m::singleton;
+
+use nmea0183::{ParseResult, Parser, Sentence};
 
 // Neo-7M sends a groups of up to 12 msgs at once:
 //
@@ -32,10 +35,12 @@ use cortex_m::singleton;
 // $GPGLL,,,,,214533.00,V,N*48
 //
 // So pre-allocate enough space to keep all messages
-const NMEA_LEN: usize = 2048;
+const UBLOX_LEN: usize = 2048;
 
-static CB: Mutex<RefCell<Option<CircBuffer<[u8; NMEA_LEN], serial::RxDma3>>>> =
+static NMEA_BUF: Mutex<RefCell<[u8; UBLOX_LEN]>> = Mutex::new(RefCell::new([0; UBLOX_LEN]));
+static CB: Mutex<RefCell<Option<CircBuffer<[u8; UBLOX_LEN], serial::RxDma3>>>> =
     Mutex::new(RefCell::new(None));
+static NMEA_RDY: AtomicBool = AtomicBool::new(false);
 
 #[entry]
 fn main() -> ! {
@@ -64,11 +69,11 @@ fn main() -> ! {
     // setup serial 'idle' interrupt before converting rx into rxdma
     rx.listen_idle();
 
-    let nmea = singleton!(: [[u8; NMEA_LEN]; 2] = [[0; NMEA_LEN]; 2]).unwrap();
+    let dmabuf = singleton!(: [[u8; UBLOX_LEN]; 2] = [[0; UBLOX_LEN]; 2]).unwrap();
     let rxdma = rx.with_dma(channels.3);
 
     interrupt_free(|cs| {
-        let circ = rxdma.circ_read(nmea);
+        let circ = rxdma.circ_read(dmabuf);
         CB.borrow(cs).replace(Some(circ));
     });
 
@@ -76,8 +81,49 @@ fn main() -> ! {
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::USART3);
     }
 
+    let mut parser = Parser::new().sentence_filter(Sentence::RMC | Sentence::GGA);
+    let mut nmeabuf: [u8; UBLOX_LEN] = [0; UBLOX_LEN];
+
     loop {
-        cortex_m::asm::nop()
+        if NMEA_RDY.load(Ordering::Acquire) {
+            interrupt_free(|cs| {
+                nmeabuf.copy_from_slice(&*NMEA_BUF.borrow(cs).borrow());
+            });
+            NMEA_RDY.store(false, Ordering::Relaxed);
+
+            for result in parser.parse_from_bytes(&nmeabuf[..]) {
+                match result {
+                    Ok(ParseResult::RMC(Some(rmc))) => {
+                        rprintln!(
+                            "GPRMC: mode {:?} date {:?} Lat {} Lon {}",
+                            rmc.mode,
+                            rmc.datetime,
+                            rmc.latitude.degrees,
+                            rmc.longitude.degrees
+                        );
+                    }
+                    Ok(ParseResult::RMC(None)) => {
+                        rprintln!("GPRMC: no fix...");
+                    }
+                    Ok(ParseResult::GGA(Some(gga))) => {
+                        rprintln!(
+                            "GPGGA: Quality {:?} satellites {}",
+                            gga.gps_quality,
+                            gga.sat_in_use
+                        );
+                    }
+                    Ok(ParseResult::GGA(None)) => {
+                        rprintln!("GPGGA: no fix...");
+                    }
+                    Ok(_) => {
+                        // skip other messages for now
+                    }
+                    Err(e) => {
+                        rprintln!("Error parsing NMEA: {}", e);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -90,17 +136,20 @@ fn USART3() {
         let usart3 = unsafe { &*USART3::ptr() };
         if usart3.sr().read().idle().bit_is_set() {
             // clear flag — read SR then DR sequence
-            usart3.sr().read();
-            usart3.dr().read();
+            let _ = usart3.sr().read();
+            let _ = usart3.dr().read();
 
             if let Some(circ) = CB.borrow(cs).take() {
                 let (buf, rxdma) = circ.stop();
-                let recv = (NMEA_LEN * 2)
+                let recv = (UBLOX_LEN * 2)
                     - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
 
-                buf[0][..recv]
-                    .iter()
-                    .for_each(|&b| rprint!("{}", b as char));
+                // skip if main loop is stuck on making its own copy for some reason
+                if !NMEA_RDY.load(Ordering::Acquire) {
+                    NMEA_BUF.borrow(cs).borrow_mut()[0..recv].copy_from_slice(&buf[0][0..recv]);
+                    NMEA_RDY.store(true, Ordering::Release);
+                }
+
                 buf[0].fill(0);
 
                 let circ = rxdma.circ_read(buf);
