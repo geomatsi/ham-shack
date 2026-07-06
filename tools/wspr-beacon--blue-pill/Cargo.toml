@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "beacon"
-path = "src/beacon.rs"
+name = "wspr"
+path = "src/wspr.rs"
 
 [dependencies]
 bitflags = "2.10.0"
@@ -17,6 +17,8 @@ panic-semihosting = "0.6.0"
 
 panic-rtt-target = "0.2.0"
 rtt-target = "0.6.2"
+
+rtic = { version = "2.2.0", features = ["thumbv7-backend"]}
 
 nb = "1.1"
 stm32f1xx-hal = { version = "0.11", features = ["stm32f103", "medium"] }
