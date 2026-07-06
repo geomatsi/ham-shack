@@ -27,13 +27,14 @@ mod app {
         // LED task
         led: PC13<Output<PushPull>>,
         tim3: CounterMs<pac::TIM3>,
+        dwt: u32,
         // GPS task
         circ: Option<CircBuffer<[u8; UBLOX_LEN], serial::RxDma3>>,
         parser: nmea0183::Parser,
     }
 
     #[init]
-    fn init(cx: init::Context) -> (Shared, Local) {
+    fn init(mut cx: init::Context) -> (Shared, Local) {
         let mut flash = cx.device.FLASH.constrain();
         let mut rcc = cx.device.RCC.freeze(
             stm32f1xx_hal::rcc::Config::hse(8.MHz())
@@ -41,6 +42,10 @@ mod app {
                 .pclk1(16.MHz()),
             &mut flash.acr,
         );
+
+        // start profiling counter
+        cx.core.DCB.enable_trace();
+        cx.core.DWT.enable_cycle_counter();
 
         rtt_init_print!();
 
@@ -56,6 +61,8 @@ mod app {
         let mut tim3 = cx.device.TIM3.counter_ms(&mut rcc);
         tim3.start(200.millis()).unwrap();
         tim3.listen(Event::Update);
+
+        let dwt: u32 = 0;
 
         let (_, mut rx) = cx
             .device
@@ -83,6 +90,7 @@ mod app {
                 // LED task
                 led,
                 tim3,
+                dwt,
                 // GPS task
                 circ: Some(circ),
                 parser: nmea_parser,
@@ -98,11 +106,17 @@ mod app {
         }
     }
 
-    #[task(binds = TIM3, priority = 2, local = [led, tim3])]
+    #[task(binds = TIM3, priority = 2, local = [led, tim3, dwt])]
     fn led(cx: led::Context) {
-        rprintln!("TIM3 LED blink");
+        let current = cortex_m::peripheral::DWT::cycle_count();
+        rprintln!(
+            "TIM3 LED blink, delta {} ms",
+            current.wrapping_sub(*cx.local.dwt) / 32_000
+        );
+        cortex_m::peripheral::DWT::cycle_count();
         cx.local.led.toggle();
         cx.local.tim3.clear_interrupt(Event::Update);
+        *cx.local.dwt = current;
     }
 
     #[task(binds = USART3, priority = 1, local = [circ, parser])]
@@ -124,6 +138,8 @@ mod app {
                 rprintln!("GPS received {} bytes", recv);
 
                 // TODO: measure cycles required for NMEA parsing: probably we can not afford copying and parsing during WSPR Tx process
+
+                let start = cortex_m::peripheral::DWT::cycle_count();
 
                 for result in cx.local.parser.parse_from_bytes(&buf[0][..]) {
                     match result {
@@ -159,6 +175,10 @@ mod app {
                 }
 
                 buf[0].fill(0);
+
+                let elapsed = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start);
+
+                rprintln!("NMEA processing: {} us", elapsed / 32);
 
                 *cx.local.circ = Some(rxdma.circ_read(buf));
             }
