@@ -3,10 +3,11 @@
 
 use panic_rtt_target as _;
 
-#[rtic::app(device = stm32f1xx_hal::pac)]
+#[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
     use cortex_m::singleton;
     use nmea0183;
+    use rtic_monotonics::stm32::prelude::*;
     use rtt_target::{rprintln, rtt_init_print};
     use stm32f1xx_hal::{
         dma::CircBuffer,
@@ -18,8 +19,9 @@ mod app {
     };
 
     const SYSCLK_MHZ: u32 = 32;
-
     const UBLOX_LEN: usize = 2048;
+
+    stm32_tim4_monotonic!(Mono, 1_000_000);
 
     #[shared]
     struct Shared {}
@@ -64,7 +66,7 @@ mod app {
         let srx = gpiob.pb11;
 
         let mut tim3 = cx.device.TIM3.counter_ms(&mut rcc);
-        tim3.start(200.millis()).unwrap();
+        tim3.start(200u32.millis()).unwrap();
         tim3.listen(Event::Update);
 
         let tick1 = cp.DWT.cyccnt.read();
@@ -90,6 +92,10 @@ mod app {
             cortex_m::peripheral::NVIC::unmask(pac::Interrupt::USART3);
         }
 
+        Mono::start(SYSCLK_MHZ * 1_000_000);
+
+        wspr::spawn(42).unwrap();
+
         (
             Shared {},
             Local {
@@ -110,6 +116,17 @@ mod app {
         loop {
             // Keep the core awake so host-side RTT attach does not time out.
             cortex_m::asm::nop();
+        }
+    }
+
+    #[task(priority = 1)]
+    async fn wspr(_cx: wspr::Context, x: i32) {
+        let mut next_update = <Mono as Monotonic>::Instant::from_ticks(0u64);
+        rprintln!("wspr started: {}", x);
+        loop {
+            rprintln!("wspr: {}", Mono::now());
+            next_update += 1000u64.millis();
+            Mono::delay_until(next_update).await;
         }
     }
 
@@ -151,30 +168,28 @@ mod app {
 
                 rprintln!("GPS received {} bytes", recv);
 
-                // TODO: measure cycles required for NMEA parsing: probably we can not afford copying and parsing during WSPR Tx process
-
                 let start = cortex_m::peripheral::DWT::cycle_count();
 
                 for result in cx.local.parser.parse_from_bytes(&buf[0][..]) {
                     match result {
                         Ok(nmea0183::ParseResult::RMC(Some(rmc))) => {
-                            rprintln!(
-                                "GPRMC: mode {:?} date {:?} Lat {} Lon {}",
-                                rmc.mode,
-                                rmc.datetime,
-                                rmc.latitude.degrees,
-                                rmc.longitude.degrees
-                            );
+                            //rprintln!(
+                            //    "GPRMC: mode {:?} date {:?} Lat {} Lon {}",
+                            //    rmc.mode,
+                            //    rmc.datetime,
+                            //    rmc.latitude.degrees,
+                            //    rmc.longitude.degrees
+                            //);
                         }
                         Ok(nmea0183::ParseResult::RMC(None)) => {
                             rprintln!("GPRMC: no fix...");
                         }
                         Ok(nmea0183::ParseResult::GGA(Some(gga))) => {
-                            rprintln!(
-                                "GPGGA: Quality {:?} satellites {}",
-                                gga.gps_quality,
-                                gga.sat_in_use
-                            );
+                            //rprintln!(
+                            //    "GPGGA: Quality {:?} satellites {}",
+                            //    gga.gps_quality,
+                            //    gga.sat_in_use
+                            //);
                         }
                         Ok(nmea0183::ParseResult::GGA(None)) => {
                             rprintln!("GPGGA: no fix...");
