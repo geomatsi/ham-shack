@@ -17,6 +17,8 @@ mod app {
         timer::{CounterMs, Event},
     };
 
+    const SYSCLK_MHZ: u32 = 32;
+
     const UBLOX_LEN: usize = 2048;
 
     #[shared]
@@ -27,25 +29,28 @@ mod app {
         // LED task
         led: PC13<Output<PushPull>>,
         tim3: CounterMs<pac::TIM3>,
-        dwt: u32,
+        tick1: u32,
         // GPS task
         circ: Option<CircBuffer<[u8; UBLOX_LEN], serial::RxDma3>>,
         parser: nmea0183::Parser,
+        tick2: u32,
     }
 
     #[init]
-    fn init(mut cx: init::Context) -> (Shared, Local) {
+    fn init(cx: init::Context) -> (Shared, Local) {
         let mut flash = cx.device.FLASH.constrain();
         let mut rcc = cx.device.RCC.freeze(
             stm32f1xx_hal::rcc::Config::hse(8.MHz())
-                .sysclk(32.MHz())
+                .sysclk(SYSCLK_MHZ.MHz())
                 .pclk1(16.MHz()),
             &mut flash.acr,
         );
+        let mut cp = cx.core;
 
-        // start profiling counter
-        cx.core.DCB.enable_trace();
-        cx.core.DWT.enable_cycle_counter();
+        rcc.clocks.sysclk().to_MHz();
+
+        cp.DCB.enable_trace();
+        cp.DWT.enable_cycle_counter();
 
         rtt_init_print!();
 
@@ -62,7 +67,8 @@ mod app {
         tim3.start(200.millis()).unwrap();
         tim3.listen(Event::Update);
 
-        let dwt: u32 = 0;
+        let tick1 = cp.DWT.cyccnt.read();
+        let tick2 = cp.DWT.cyccnt.read();
 
         let (_, mut rx) = cx
             .device
@@ -90,10 +96,11 @@ mod app {
                 // LED task
                 led,
                 tim3,
-                dwt,
+                tick1,
                 // GPS task
                 circ: Some(circ),
                 parser: nmea_parser,
+                tick2,
             },
         )
     }
@@ -106,21 +113,28 @@ mod app {
         }
     }
 
-    #[task(binds = TIM3, priority = 2, local = [led, tim3, dwt])]
+    #[task(binds = TIM3, priority = 2, local = [led, tim3, tick1])]
     fn led(cx: led::Context) {
         let current = cortex_m::peripheral::DWT::cycle_count();
         rprintln!(
-            "TIM3 LED blink, delta {} ms",
-            current.wrapping_sub(*cx.local.dwt) / 32_000
+            "LED: delta {} ms",
+            current.wrapping_sub(*cx.local.tick1) / (SYSCLK_MHZ * 1000)
         );
-        cortex_m::peripheral::DWT::cycle_count();
+        *cx.local.tick1 = current;
+
         cx.local.led.toggle();
         cx.local.tim3.clear_interrupt(Event::Update);
-        *cx.local.dwt = current;
     }
 
-    #[task(binds = USART3, priority = 1, local = [circ, parser])]
+    #[task(binds = USART3, priority = 1, local = [circ, parser, tick2])]
     fn gps(cx: gps::Context) {
+        let current = cortex_m::peripheral::DWT::cycle_count();
+        rprintln!(
+            "GPS delta {} ms",
+            current.wrapping_sub(*cx.local.tick2) / (SYSCLK_MHZ * 1000)
+        );
+        *cx.local.tick2 = current;
+
         // Note: rx is 'moved' on rx.with_dma, so we can not use rx anymore.
         // IIUC there is no legitimate way to use rx.is_idle together with rxdma in current stm32f1xx HAL code.
         // For now just use direct unsafe access to USART3 and DMA1 regs to check interrupt status and transferred bytes.
@@ -178,7 +192,7 @@ mod app {
 
                 let elapsed = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start);
 
-                rprintln!("NMEA processing: {} us", elapsed / 32);
+                rprintln!("NMEA processing: {} us", elapsed / SYSCLK_MHZ);
 
                 *cx.local.circ = Some(rxdma.circ_read(buf));
             }
