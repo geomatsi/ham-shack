@@ -3,8 +3,17 @@
 
 use panic_rtt_target as _;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum State {
+    WaitFix,
+    TxReady,
+    TxActive,
+    TxDone,
+}
+
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
+    use crate::State;
     use cortex_m::singleton;
     use nmea0183;
     use rtic_monotonics::stm32::prelude::*;
@@ -25,7 +34,9 @@ mod app {
     stm32_tim4_monotonic!(Mono, 1_000_000);
 
     #[shared]
-    struct Shared {}
+    struct Shared {
+        state: State,
+    }
 
     #[local]
     struct Local {
@@ -101,6 +112,8 @@ mod app {
 
         //// Interrupts
 
+        let state: State = State::WaitFix;
+
         unsafe {
             pac::NVIC::unmask(pac::Interrupt::USART3);
             pac::NVIC::unmask(pac::Interrupt::EXTI1);
@@ -109,7 +122,7 @@ mod app {
         Mono::start(SYSCLK_MHZ * 1_000_000);
 
         (
-            Shared {},
+            Shared { state },
             Local {
                 // LED task
                 led,
@@ -125,17 +138,38 @@ mod app {
         )
     }
 
-    #[idle]
-    fn idle(_cx: idle::Context) -> ! {
+    #[idle(shared = [state])]
+    fn idle(mut cx: idle::Context) -> ! {
         loop {
+            cx.shared.state.lock(|state| {
+                if *state == State::WaitFix {
+                    *state = State::TxReady;
+                }
+                if *state == State::TxDone {
+                    *state = State::TxReady;
+                }
+            });
+
             // Keep the core awake so host-side RTT attach does not time out.
             cortex_m::asm::nop();
         }
     }
 
-    #[task(priority = 10)]
-    async fn wspr(_cx: wspr::Context, x: i32) {
+    #[task(priority = 10, shared = [state])]
+    async fn wspr(mut cx: wspr::Context, x: i32) {
+        let mut tx = false;
         rprintln!("WSPR started: {}", x);
+
+        cx.shared.state.lock(|state| {
+            if *state == State::TxReady {
+                *state = State::TxActive;
+                tx = true;
+            }
+        });
+
+        if !tx {
+            return;
+        }
 
         match wspr_encoder::encode("R1BRL", "KP50", 37) {
             Ok(symbols) => {
@@ -150,25 +184,36 @@ mod app {
                     // TODO
                     // set_frequency(frequency);
                     // enable_tx();
-                    rprintln!("WSPR sending: {}", symbol);
-                    Mono::delay(10_u64.millis() /* 683_u64.millis() */).await;
+                    Mono::delay(50_u64.millis() /* 683_u64.millis() */).await;
                     // disable_tx();
                 }
-            },
+            }
             Err(e) => {
                 rprintln!("WSPR: fatal encoding failure: {:?}", e);
             }
         }
+
+        cx.shared.state.lock(|state| {
+            *state = State::TxDone;
+        });
     }
 
-    #[task(binds = EXTI1, priority = 10, local = [pps])]
-    fn pps(cx: pps::Context) {
+    #[task(binds = EXTI1, priority = 10, local = [pps], shared = [state])]
+    fn pps(mut cx: pps::Context) {
         if cx.local.pps.check_interrupt() {
             cx.local.pps.clear_interrupt_pending_bit();
-            match wspr::spawn(42) {
-                Ok(_) => { rprintln!("PPS: spawned WSPR"); },
-                Err(_) => { rprintln!("PPS: WSPR is already running")}
-            }
+            cx.shared.state.lock(|state| {
+                if *state == State::TxReady {
+                    match wspr::spawn(42) {
+                        Ok(_) => {
+                            rprintln!("PPS: spawned WSPR");
+                        }
+                        Err(_) => {
+                            rprintln!("PPS: WSPR is already running")
+                        }
+                    }
+                }
+            });
         }
     }
 
@@ -185,8 +230,9 @@ mod app {
         cx.local.tim3.clear_interrupt(Event::Update);
     }
 
-    #[task(binds = USART3, priority = 5, local = [circ, parser, tick2])]
-    fn gps(cx: gps::Context) {
+    #[task(binds = USART3, priority = 5, local = [circ, parser, tick2], shared = [state])]
+    fn gps(mut cx: gps::Context) {
+        let mut process_nmea = true;
         let current = cortex_m::peripheral::DWT::cycle_count();
         rprintln!(
             "GPS delta {} ms",
@@ -208,47 +254,53 @@ mod app {
                 let recv = (UBLOX_LEN * 2)
                     - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
 
+                cx.shared.state.lock(|state| {
+                    if *state == State::TxActive {
+                        process_nmea = false;
+                    }
+                });
+
                 rprintln!("GPS received {} bytes", recv);
 
                 let start = cortex_m::peripheral::DWT::cycle_count();
 
-                for result in cx.local.parser.parse_from_bytes(&buf[0][..]) {
-                    match result {
-                        Ok(nmea0183::ParseResult::RMC(Some(rmc))) => {
-                            //rprintln!(
-                            //    "GPRMC: mode {:?} date {:?} Lat {} Lon {}",
-                            //    rmc.mode,
-                            //    rmc.datetime,
-                            //    rmc.latitude.degrees,
-                            //    rmc.longitude.degrees
-                            //);
-                        }
-                        Ok(nmea0183::ParseResult::RMC(None)) => {
-                            rprintln!("GPRMC: no fix...");
-                        }
-                        Ok(nmea0183::ParseResult::GGA(Some(gga))) => {
-                            //rprintln!(
-                            //    "GPGGA: Quality {:?} satellites {}",
-                            //    gga.gps_quality,
-                            //    gga.sat_in_use
-                            //);
-                        }
-                        Ok(nmea0183::ParseResult::GGA(None)) => {
-                            //rprintln!("GPGGA: no fix...");
-                        }
-                        Ok(_) => {
-                            // skip other messages for now
-                        }
-                        Err(e) => {
-                            rprintln!("Error parsing NMEA: {}", e);
+                if process_nmea {
+                    for result in cx.local.parser.parse_from_bytes(&buf[0][..]) {
+                        match result {
+                            Ok(nmea0183::ParseResult::RMC(Some(rmc))) => {
+                                //rprintln!(
+                                //    "GPRMC: mode {:?} date {:?} Lat {} Lon {}",
+                                //    rmc.mode,
+                                //    rmc.datetime,
+                                //    rmc.latitude.degrees,
+                                //    rmc.longitude.degrees
+                                //);
+                            }
+                            Ok(nmea0183::ParseResult::RMC(None)) => {
+                                rprintln!("GPRMC: no fix...");
+                            }
+                            Ok(nmea0183::ParseResult::GGA(Some(gga))) => {
+                                //rprintln!(
+                                //    "GPGGA: Quality {:?} satellites {}",
+                                //    gga.gps_quality,
+                                //    gga.sat_in_use
+                                //);
+                            }
+                            Ok(nmea0183::ParseResult::GGA(None)) => {
+                                //rprintln!("GPGGA: no fix...");
+                            }
+                            Ok(_) => {
+                                // skip other messages for now
+                            }
+                            Err(e) => {
+                                rprintln!("Error parsing NMEA: {}", e);
+                            }
                         }
                     }
                 }
 
                 buf[0].fill(0);
-
                 let elapsed = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start);
-
                 rprintln!("NMEA processing: {} us", elapsed / SYSCLK_MHZ);
 
                 *cx.local.circ = Some(rxdma.circ_read(buf));
