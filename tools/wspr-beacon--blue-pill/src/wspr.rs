@@ -11,12 +11,13 @@ mod app {
     use rtt_target::{rprintln, rtt_init_print};
     use stm32f1xx_hal::{
         dma::CircBuffer,
-        gpio::{Output, PushPull, gpioc::PC13},
+        gpio::{Edge, ExtiPin, Input, Output, PushPull, gpiob::PB1, gpioc::PC13},
         pac::{self, DMA1, USART3},
         prelude::*,
         serial,
         timer::{CounterMs, Event},
     };
+    use wspr_encoder;
 
     const SYSCLK_MHZ: u32 = 32;
     const UBLOX_LEN: usize = 2048;
@@ -36,10 +37,12 @@ mod app {
         circ: Option<CircBuffer<[u8; UBLOX_LEN], serial::RxDma3>>,
         parser: nmea0183::Parser,
         tick2: u32,
+        // PPS task
+        pps: PB1<Input>,
     }
 
     #[init]
-    fn init(cx: init::Context) -> (Shared, Local) {
+    fn init(mut cx: init::Context) -> (Shared, Local) {
         let mut flash = cx.device.FLASH.constrain();
         let mut rcc = cx.device.RCC.freeze(
             stm32f1xx_hal::rcc::Config::hse(8.MHz())
@@ -62,16 +65,22 @@ mod app {
         let channels = cx.device.DMA1.split(&mut rcc);
 
         let led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
-        let stx = gpiob.pb10.into_alternate_open_drain(&mut gpiob.crh);
-        let srx = gpiob.pb11;
 
+        //// LED
         let mut tim3 = cx.device.TIM3.counter_ms(&mut rcc);
-        tim3.start(200u32.millis()).unwrap();
+        let tick1 = cp.DWT.cyccnt.read();
+        tim3.start(5000u32.millis()).unwrap();
         tim3.listen(Event::Update);
 
-        let tick1 = cp.DWT.cyccnt.read();
-        let tick2 = cp.DWT.cyccnt.read();
+        //// PPS
+        let mut pps = gpiob.pb1.into_floating_input(&mut gpiob.crl);
+        pps.make_interrupt_source(&mut afio);
+        pps.trigger_on_edge(&mut cx.device.EXTI, Edge::Rising);
+        pps.enable_interrupt(&mut cx.device.EXTI);
 
+        //// GPS
+        let stx = gpiob.pb10.into_alternate_open_drain(&mut gpiob.crh);
+        let srx = gpiob.pb11;
         let (_, mut rx) = cx
             .device
             .USART3
@@ -88,13 +97,16 @@ mod app {
         let rxdma = rx.with_dma(channels.3);
         let circ = rxdma.circ_read(dmabuf);
 
+        let tick2 = cp.DWT.cyccnt.read();
+
+        //// Interrupts
+
         unsafe {
-            cortex_m::peripheral::NVIC::unmask(pac::Interrupt::USART3);
+            pac::NVIC::unmask(pac::Interrupt::USART3);
+            pac::NVIC::unmask(pac::Interrupt::EXTI1);
         }
 
         Mono::start(SYSCLK_MHZ * 1_000_000);
-
-        wspr::spawn(42).unwrap();
 
         (
             Shared {},
@@ -107,6 +119,8 @@ mod app {
                 circ: Some(circ),
                 parser: nmea_parser,
                 tick2,
+                // PPS task
+                pps,
             },
         )
     }
@@ -119,18 +133,46 @@ mod app {
         }
     }
 
-    #[task(priority = 1)]
+    #[task(priority = 10)]
     async fn wspr(_cx: wspr::Context, x: i32) {
-        let mut next_update = <Mono as Monotonic>::Instant::from_ticks(0u64);
-        rprintln!("wspr started: {}", x);
-        loop {
-            rprintln!("wspr: {}", Mono::now());
-            next_update += 1000u64.millis();
-            Mono::delay_until(next_update).await;
+        rprintln!("WSPR started: {}", x);
+
+        match wspr_encoder::encode("R1BRL", "KP50", 37) {
+            Ok(symbols) => {
+                // 20m WSPR dial frequency in KHz
+                let dial = 14095.6;
+
+                // WSPR transmit frequencies are 1.5KHz above the dial frequency
+                let offset = 1.5;
+
+                for symbol in symbols.iter() {
+                    let _frequency = dial + offset + (0.001464 * (*symbol as f64));
+                    // TODO
+                    // set_frequency(frequency);
+                    // enable_tx();
+                    rprintln!("WSPR sending: {}", symbol);
+                    Mono::delay(10_u64.millis() /* 683_u64.millis() */).await;
+                    // disable_tx();
+                }
+            },
+            Err(e) => {
+                rprintln!("WSPR: fatal encoding failure: {:?}", e);
+            }
         }
     }
 
-    #[task(binds = TIM3, priority = 2, local = [led, tim3, tick1])]
+    #[task(binds = EXTI1, priority = 10, local = [pps])]
+    fn pps(cx: pps::Context) {
+        if cx.local.pps.check_interrupt() {
+            cx.local.pps.clear_interrupt_pending_bit();
+            match wspr::spawn(42) {
+                Ok(_) => { rprintln!("PPS: spawned WSPR"); },
+                Err(_) => { rprintln!("PPS: WSPR is already running")}
+            }
+        }
+    }
+
+    #[task(binds = TIM3, priority = 1, local = [led, tim3, tick1])]
     fn led(cx: led::Context) {
         let current = cortex_m::peripheral::DWT::cycle_count();
         rprintln!(
@@ -143,7 +185,7 @@ mod app {
         cx.local.tim3.clear_interrupt(Event::Update);
     }
 
-    #[task(binds = USART3, priority = 1, local = [circ, parser, tick2])]
+    #[task(binds = USART3, priority = 5, local = [circ, parser, tick2])]
     fn gps(cx: gps::Context) {
         let current = cortex_m::peripheral::DWT::cycle_count();
         rprintln!(
@@ -192,7 +234,7 @@ mod app {
                             //);
                         }
                         Ok(nmea0183::ParseResult::GGA(None)) => {
-                            rprintln!("GPGGA: no fix...");
+                            //rprintln!("GPGGA: no fix...");
                         }
                         Ok(_) => {
                             // skip other messages for now

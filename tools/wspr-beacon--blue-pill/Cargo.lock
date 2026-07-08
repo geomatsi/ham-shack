@@ -776,6 +776,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "wspr"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39c7b607bfb255692a902aad2d18050100d69bdcec96790bea20f7c6925c53d4"
+
+[[package]]
 name = "wspr-beacon"
 version = "0.1.0"
 dependencies = [
@@ -797,4 +803,5 @@ dependencies = [
  "rtt-target",
  "ssd1306",
  "stm32f1xx-hal",
+ "wspr",
 ]
