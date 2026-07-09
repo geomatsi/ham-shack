@@ -1,20 +1,97 @@
 #![no_main]
 #![no_std]
 
+use core::cmp::Ordering;
 use panic_rtt_target as _;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum State {
-    WaitFix,
+    WaitGps,
+    TxWait,
     TxReady,
     TxActive,
     TxDone,
 }
 
+#[derive(Clone, Copy, Default)]
+pub enum Event {
+    /// Empty
+    #[default]
+    NIL,
+    /// LED data
+    LED,
+    /// No GPS fix
+    NOGPS,
+    /// GPS data
+    GPS((u8, u8), (u8, u8), (u8, u8, f32)),
+    /// PPS data
+    PPS,
+}
+
+impl Event {
+    fn prio(self) -> u8 {
+        match self {
+            Event::NIL => 0u8,
+            Event::LED => 10u8,
+            Event::NOGPS => 20u8,
+            Event::GPS(_, _, _) => 20u8,
+            Event::PPS => 50u8,
+        }
+    }
+}
+
+/* simple ordering of events based only on their priority */
+
+impl Eq for Event {}
+
+impl PartialEq for Event {
+    fn eq(&self, other: &Event) -> bool {
+        self.prio() == other.prio()
+    }
+}
+
+impl PartialOrd for Event {
+    fn partial_cmp(&self, other: &Event) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Event {
+    fn cmp(&self, other: &Event) -> Ordering {
+        match self {
+            Event::NIL => match other {
+                Event::NIL => Ordering::Equal,
+                _ => self.prio().cmp(&other.prio()),
+            },
+            Event::LED => match other {
+                Event::LED => Ordering::Equal,
+                _ => self.prio().cmp(&other.prio()),
+            },
+            Event::NOGPS => match other {
+                Event::NOGPS => Ordering::Equal,
+                _ => self.prio().cmp(&other.prio()),
+            },
+            Event::GPS(_, _, _) => match other {
+                Event::GPS(_, _, _) => Ordering::Equal,
+                _ => self.prio().cmp(&other.prio()),
+            },
+            Event::PPS => match other {
+                Event::PPS => Ordering::Equal,
+                _ => self.prio().cmp(&other.prio()),
+            },
+        }
+    }
+}
+
+////
+
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
+    use crate::Event;
     use crate::State;
+
     use cortex_m::singleton;
+    use heapless::binary_heap::{BinaryHeap, Max};
     use nmea0183;
     use rtic_monotonics::stm32::prelude::*;
     use rtt_target::{rprintln, rtt_init_print};
@@ -23,8 +100,7 @@ mod app {
         gpio::{Edge, ExtiPin, Input, Output, PushPull, gpiob::PB1, gpioc::PC13},
         pac::{self, DMA1, USART3},
         prelude::*,
-        serial,
-        timer::{CounterMs, Event},
+        serial, timer,
     };
     use wspr_encoder;
 
@@ -36,18 +112,17 @@ mod app {
     #[shared]
     struct Shared {
         state: State,
+        queue: BinaryHeap<Event, Max, 4>,
     }
 
     #[local]
     struct Local {
         // LED task
         led: PC13<Output<PushPull>>,
-        tim3: CounterMs<pac::TIM3>,
-        tick1: u32,
+        tim3: timer::CounterMs<pac::TIM3>,
         // GPS task
         circ: Option<CircBuffer<[u8; UBLOX_LEN], serial::RxDma3>>,
         parser: nmea0183::Parser,
-        tick2: u32,
         // PPS task
         pps: PB1<Input>,
     }
@@ -79,9 +154,8 @@ mod app {
 
         //// LED
         let mut tim3 = cx.device.TIM3.counter_ms(&mut rcc);
-        let tick1 = cp.DWT.cyccnt.read();
         tim3.start(5000u32.millis()).unwrap();
-        tim3.listen(Event::Update);
+        tim3.listen(timer::Event::Update);
 
         //// PPS
         let mut pps = gpiob.pb1.into_floating_input(&mut gpiob.crl);
@@ -108,11 +182,10 @@ mod app {
         let rxdma = rx.with_dma(channels.3);
         let circ = rxdma.circ_read(dmabuf);
 
-        let tick2 = cp.DWT.cyccnt.read();
-
         //// Interrupts
 
-        let state: State = State::WaitFix;
+        let state: State = State::WaitGps;
+        let queue: BinaryHeap<Event, Max, 4> = BinaryHeap::new();
 
         unsafe {
             pac::NVIC::unmask(pac::Interrupt::USART3);
@@ -122,33 +195,93 @@ mod app {
         Mono::start(SYSCLK_MHZ * 1_000_000);
 
         (
-            Shared { state },
+            Shared { state, queue },
             Local {
                 // LED task
                 led,
                 tim3,
-                tick1,
                 // GPS task
                 circ: Some(circ),
                 parser: nmea_parser,
-                tick2,
                 // PPS task
                 pps,
             },
         )
     }
 
-    #[idle(shared = [state])]
+    #[idle(shared = [state, queue])]
     fn idle(mut cx: idle::Context) -> ! {
+        let mut event: Event = Event::NIL;
+
         loop {
-            cx.shared.state.lock(|state| {
-                if *state == State::WaitFix {
-                    *state = State::TxReady;
-                }
-                if *state == State::TxDone {
-                    *state = State::TxReady;
+            cx.shared.queue.lock(|queue| {
+                if !queue.is_empty()
+                    && let Some(e) = queue.pop()
+                {
+                    event = e;
                 }
             });
+
+            match event {
+                Event::PPS => {
+                    rprintln!("Event PPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+                }
+                Event::GPS(lat, lon, time) => {
+                    rprintln!(
+                        "Event GPS: LOC ({}, {}) TIME ({}:{}:{}) (DWT {})",
+                        lat.0,
+                        lon.0,
+                        time.0,
+                        time.1,
+                        time.2 as u8,
+                        cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                    );
+                }
+                Event::NOGPS => {
+                    rprintln!("Event GPS: no fix");
+                }
+                _ => {}
+            }
+
+            cx.shared.state.lock(|state| match *state {
+                State::WaitGps => match event {
+                    Event::GPS(_, _, _) => {
+                        *state = State::TxWait;
+                    }
+                    _ => {}
+                },
+                State::TxWait => match event {
+                    Event::GPS(_, _, time) => {
+                        if time.2 as u8 == 59u8 {
+                            *state = State::TxReady;
+                        }
+                    }
+                    Event::NOGPS => {
+                        *state = State::WaitGps;
+                    }
+                    _ => {}
+                },
+                State::TxReady => match event {
+                    Event::PPS => match wspr::spawn(42) {
+                        Ok(_) => {
+                            rprintln!("PPS: spawned WSPR");
+                        }
+                        Err(_) => {
+                            rprintln!("PPS: WSPR is already running")
+                        }
+                    },
+                    Event::NOGPS => {
+                        *state = State::WaitGps;
+                    }
+                    _ => {}
+                },
+                State::TxActive => {}
+                State::TxDone => {
+                    *state = State::TxWait;
+                }
+            });
+
+            event = Event::NIL;
 
             // Keep the core awake so host-side RTT attach does not time out.
             cortex_m::asm::nop();
@@ -198,47 +331,30 @@ mod app {
         });
     }
 
-    #[task(binds = EXTI1, priority = 10, local = [pps], shared = [state])]
+    #[task(binds = EXTI1, priority = 10, local = [pps], shared = [state, queue])]
     fn pps(mut cx: pps::Context) {
         if cx.local.pps.check_interrupt() {
+            rprintln!("IRQ PPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
             cx.local.pps.clear_interrupt_pending_bit();
-            cx.shared.state.lock(|state| {
-                if *state == State::TxReady {
-                    match wspr::spawn(42) {
-                        Ok(_) => {
-                            rprintln!("PPS: spawned WSPR");
-                        }
-                        Err(_) => {
-                            rprintln!("PPS: WSPR is already running")
-                        }
-                    }
-                }
+            cx.shared.queue.lock(|queue| {
+                queue.push(Event::PPS).ok();
             });
         }
     }
 
-    #[task(binds = TIM3, priority = 1, local = [led, tim3, tick1])]
-    fn led(cx: led::Context) {
-        let current = cortex_m::peripheral::DWT::cycle_count();
-        rprintln!(
-            "LED: delta {} ms",
-            current.wrapping_sub(*cx.local.tick1) / (SYSCLK_MHZ * 1000)
-        );
-        *cx.local.tick1 = current;
+    #[task(binds = TIM3, priority = 1, local = [led, tim3], shared = [queue])]
+    fn led(mut cx: led::Context) {
+        cx.shared.queue.lock(|queue| {
+            queue.push(Event::LED).ok();
+        });
 
+        cx.local.tim3.clear_interrupt(timer::Event::Update);
         cx.local.led.toggle();
-        cx.local.tim3.clear_interrupt(Event::Update);
     }
 
-    #[task(binds = USART3, priority = 5, local = [circ, parser, tick2], shared = [state])]
+    #[task(binds = USART3, priority = 5, local = [circ, parser], shared = [state, queue])]
     fn gps(mut cx: gps::Context) {
         let mut process_nmea = true;
-        let current = cortex_m::peripheral::DWT::cycle_count();
-        rprintln!(
-            "GPS delta {} ms",
-            current.wrapping_sub(*cx.local.tick2) / (SYSCLK_MHZ * 1000)
-        );
-        *cx.local.tick2 = current;
 
         // Note: rx is 'moved' on rx.with_dma, so we can not use rx anymore.
         // IIUC there is no legitimate way to use rx.is_idle together with rxdma in current stm32f1xx HAL code.
@@ -249,9 +365,11 @@ mod app {
             let _ = usart3.sr().read();
             let _ = usart3.dr().read();
 
+            rprintln!("IRQ GPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+
             if let Some(circ) = cx.local.circ.take() {
                 let (buf, rxdma) = circ.stop();
-                let recv = (UBLOX_LEN * 2)
+                let _recv = (UBLOX_LEN * 2)
                     - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
 
                 cx.shared.state.lock(|state| {
@@ -260,34 +378,32 @@ mod app {
                     }
                 });
 
-                rprintln!("GPS received {} bytes", recv);
-
-                let start = cortex_m::peripheral::DWT::cycle_count();
+                //let start = cortex_m::peripheral::DWT::cycle_count();
 
                 if process_nmea {
+                    let mut fix = false;
+                    let mut latd: u8 = 0u8;
+                    let mut latm: u8 = 0u8;
+                    let mut lond: u8 = 0u8;
+                    let mut lonm: u8 = 0u8;
+                    let mut h = 0;
+                    let mut m = 0;
+                    let mut s = 0f32;
+
                     for result in cx.local.parser.parse_from_bytes(&buf[0][..]) {
                         match result {
                             Ok(nmea0183::ParseResult::RMC(Some(rmc))) => {
-                                //rprintln!(
-                                //    "GPRMC: mode {:?} date {:?} Lat {} Lon {}",
-                                //    rmc.mode,
-                                //    rmc.datetime,
-                                //    rmc.latitude.degrees,
-                                //    rmc.longitude.degrees
-                                //);
+                                h = rmc.datetime.time.hours;
+                                m = rmc.datetime.time.minutes;
+                                s = rmc.datetime.time.seconds;
+                                latd = rmc.latitude.degrees;
+                                latm = rmc.latitude.minutes;
+                                lond = rmc.longitude.degrees;
+                                lonm = rmc.longitude.minutes;
+                                fix = true;
                             }
                             Ok(nmea0183::ParseResult::RMC(None)) => {
-                                rprintln!("GPRMC: no fix...");
-                            }
-                            Ok(nmea0183::ParseResult::GGA(Some(gga))) => {
-                                //rprintln!(
-                                //    "GPGGA: Quality {:?} satellites {}",
-                                //    gga.gps_quality,
-                                //    gga.sat_in_use
-                                //);
-                            }
-                            Ok(nmea0183::ParseResult::GGA(None)) => {
-                                //rprintln!("GPGGA: no fix...");
+                                fix = false;
                             }
                             Ok(_) => {
                                 // skip other messages for now
@@ -297,11 +413,20 @@ mod app {
                             }
                         }
                     }
+
+                    cx.shared.queue.lock(|queue| {
+                        if fix {
+                            queue
+                                .push(Event::GPS((latd, latm), (lond, lonm), (h, m, s)))
+                                .ok();
+                        } else {
+                            queue.push(Event::NOGPS).ok();
+                        }
+                    });
                 }
 
                 buf[0].fill(0);
-                let elapsed = cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start);
-                rprintln!("NMEA processing: {} us", elapsed / SYSCLK_MHZ);
+                //rprintln!("NMEA processing: {} us", cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start) / SYSCLK_MHZ);
 
                 *cx.local.circ = Some(rxdma.circ_read(buf));
             }

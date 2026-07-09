@@ -30,6 +30,7 @@ bitbang-hal = "0.3.3"
 embedded-graphics = "0.8"
 nmea0183 = "0.6.0"
 wspr_encoder = { package = "wspr", version = "0.1.0" }
+heapless = "0.9.3"
 
 embedded-hal = "0.2.7"
 embedded-hal-1 = { package = "embedded-hal", version = "1.0.0" }
