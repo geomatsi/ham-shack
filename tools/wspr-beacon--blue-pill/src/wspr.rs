@@ -107,6 +107,7 @@ mod app {
 
     const SYSCLK_MHZ: u32 = 32;
     const UBLOX_LEN: usize = 2048;
+    const DWT_MEAS: bool  = true;
 
     stm32_tim4_monotonic!(Mono, 1_000_000);
 
@@ -142,8 +143,10 @@ mod app {
 
         rcc.clocks.sysclk().to_MHz();
 
-        cp.DCB.enable_trace();
-        cp.DWT.enable_cycle_counter();
+        if DWT_MEAS {
+            cp.DCB.enable_trace();
+            cp.DWT.enable_cycle_counter();
+        }
 
         rtt_init_print!();
 
@@ -233,7 +236,9 @@ mod app {
 
             match event {
                 Event::PPS => {
-                    rprintln!("Event PPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+                    if DWT_MEAS {
+                        rprintln!("Event PPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+                    }
                 }
                 Event::GPS(lat, lon, time) => {
                     rprintln!(
@@ -368,7 +373,9 @@ mod app {
     #[task(binds = EXTI1, priority = 10, local = [pps], shared = [state, queue])]
     fn pps(mut cx: pps::Context) {
         if cx.local.pps.check_interrupt() {
-            rprintln!("IRQ PPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+            if DWT_MEAS {
+                rprintln!("IRQ PPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+            }
             cx.local.pps.clear_interrupt_pending_bit();
             cx.shared.queue.lock(|queue| {
                 queue.push(Event::PPS).ok();
@@ -399,7 +406,9 @@ mod app {
             let _ = usart3.sr().read();
             let _ = usart3.dr().read();
 
-            rprintln!("IRQ GPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+            if DWT_MEAS {
+                rprintln!("IRQ GPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+            }
 
             if let Some(circ) = cx.local.circ.take() {
                 let (buf, rxdma) = circ.stop();
