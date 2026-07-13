@@ -11,6 +11,7 @@ pub enum State {
     TxReady,
     TxActive,
     TxDone,
+    Error(u8),
 }
 
 #[derive(Clone, Copy, Default)]
@@ -113,6 +114,7 @@ mod app {
     struct Shared {
         state: State,
         queue: BinaryHeap<Event, Max, 4>,
+        wspr_msg: Option<[u8; 162]>,
     }
 
     #[local]
@@ -182,10 +184,13 @@ mod app {
         let rxdma = rx.with_dma(channels.3);
         let circ = rxdma.circ_read(dmabuf);
 
-        //// Interrupts
+        //// shared globals
 
         let state: State = State::WaitGps;
+        let wspr_msg: Option<[u8; 162]> = None;
         let queue: BinaryHeap<Event, Max, 4> = BinaryHeap::new();
+
+        //// Interrupts
 
         unsafe {
             pac::NVIC::unmask(pac::Interrupt::USART3);
@@ -195,7 +200,11 @@ mod app {
         Mono::start(SYSCLK_MHZ * 1_000_000);
 
         (
-            Shared { state, queue },
+            Shared {
+                state,
+                queue,
+                wspr_msg,
+            },
             Local {
                 // LED task
                 led,
@@ -209,7 +218,7 @@ mod app {
         )
     }
 
-    #[idle(shared = [state, queue])]
+    #[idle(shared = [state, queue, wspr_msg])]
     fn idle(mut cx: idle::Context) -> ! {
         let mut event: Event = Event::NIL;
 
@@ -246,10 +255,23 @@ mod app {
             cx.shared.state.lock(|state| match *state {
                 State::WaitGps => match event {
                     Event::GPS(_, _, _) => {
-                        *state = State::TxWait;
+                        // TODO: calculate QTH from GPS lat/lon
+                        cx.shared.wspr_msg.lock(|msg| {
+                            if msg.is_none() {
+                                match wspr_encoder::encode("R1BRL", "KP50", 37) {
+                                    Ok(symbols) => {
+                                        *msg = Some(symbols);
+                                        *state = State::TxWait;
+                                    }
+                                    Err(e) => {
+                                        rprintln!("SCHED: fatal WSPR encoding failure: {:?}", e);
+                                    }
+                                }
+                            }
+                        });
                     }
                     _ => {}
-                },
+                }
                 State::TxWait => match event {
                     Event::GPS(_, _, time) => {
                         if time.2 as u8 == 59u8 {
@@ -260,24 +282,28 @@ mod app {
                         *state = State::WaitGps;
                     }
                     _ => {}
-                },
+                }
                 State::TxReady => match event {
                     Event::PPS => match wspr::spawn(42) {
                         Ok(_) => {
-                            rprintln!("PPS: spawned WSPR");
+                            rprintln!("SCHED: spawned WSPR");
                         }
                         Err(_) => {
-                            rprintln!("PPS: WSPR is already running")
+                            rprintln!("SCHED: WSPR is already running")
                         }
                     },
                     Event::NOGPS => {
                         *state = State::WaitGps;
                     }
                     _ => {}
-                },
+                }
                 State::TxActive => {}
                 State::TxDone => {
-                    *state = State::TxWait;
+                    *state = State::WaitGps;
+                }
+                State::Error(code) => {
+                    rprintln!("SCHED: error code {}", code);
+                    *state = State::WaitGps;
                 }
             });
 
@@ -288,9 +314,11 @@ mod app {
         }
     }
 
-    #[task(priority = 10, shared = [state])]
+    #[task(priority = 10, shared = [state, wspr_msg])]
     async fn wspr(mut cx: wspr::Context, x: i32) {
+        let mut msg: Option<[u8; 162]> = None;
         let mut tx = false;
+
         rprintln!("WSPR started: {}", x);
 
         cx.shared.state.lock(|state| {
@@ -300,12 +328,16 @@ mod app {
             }
         });
 
+        cx.shared.wspr_msg.lock(|wspr_msg| {
+            msg = *wspr_msg;
+        });
+
         if !tx {
             return;
         }
 
-        match wspr_encoder::encode("R1BRL", "KP50", 37) {
-            Ok(symbols) => {
+        match msg {
+            Some(symbols) => {
                 // 20m WSPR dial frequency in KHz
                 let dial = 14095.6;
 
@@ -317,18 +349,20 @@ mod app {
                     // TODO
                     // set_frequency(frequency);
                     // enable_tx();
-                    Mono::delay(50_u64.millis() /* 683_u64.millis() */).await;
+                    Mono::delay(683_u64.millis()).await;
                     // disable_tx();
                 }
+
+                cx.shared.state.lock(|state| {
+                    *state = State::TxDone;
+                });
             }
-            Err(e) => {
-                rprintln!("WSPR: fatal encoding failure: {:?}", e);
+            None => {
+                cx.shared.state.lock(|state| {
+                    *state = State::Error(10);
+                });
             }
         }
-
-        cx.shared.state.lock(|state| {
-            *state = State::TxDone;
-        });
     }
 
     #[task(binds = EXTI1, priority = 10, local = [pps], shared = [state, queue])]
