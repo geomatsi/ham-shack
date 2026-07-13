@@ -6,7 +6,7 @@ use panic_rtt_target as _;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum State {
-    WaitGps,
+    GpsWait,
     TxWait,
     TxReady,
     TxActive,
@@ -189,7 +189,7 @@ mod app {
 
         //// shared globals
 
-        let state: State = State::WaitGps;
+        let state: State = State::GpsWait;
         let wspr_msg: Option<[u8; 162]> = None;
         let queue: BinaryHeap<Event, Max, 4> = BinaryHeap::new();
 
@@ -258,7 +258,7 @@ mod app {
             }
 
             cx.shared.state.lock(|state| match *state {
-                State::WaitGps => match event {
+                State::GpsWait => match event {
                     Event::GPS(_, _, _) => {
                         // TODO: calculate QTH from GPS lat/lon
                         cx.shared.wspr_msg.lock(|msg| {
@@ -284,7 +284,7 @@ mod app {
                         }
                     }
                     Event::NOGPS => {
-                        *state = State::WaitGps;
+                        *state = State::GpsWait;
                     }
                     _ => {}
                 }
@@ -298,17 +298,17 @@ mod app {
                         }
                     },
                     Event::NOGPS => {
-                        *state = State::WaitGps;
+                        *state = State::GpsWait;
                     }
                     _ => {}
                 }
                 State::TxActive => {}
                 State::TxDone => {
-                    *state = State::WaitGps;
+                    *state = State::GpsWait;
                 }
                 State::Error(code) => {
                     rprintln!("SCHED: error code {}", code);
-                    *state = State::WaitGps;
+                    *state = State::GpsWait;
                 }
             });
 
