@@ -7,7 +7,7 @@ use panic_rtt_target as _;
 mod app {
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::states::State;
-    use wspr_beacon::beacon::qth::{QthError, qth_square}; 
+    use wspr_beacon::beacon::qth::{Coordinates, qth_square};
 
     use cortex_m::singleton;
     use heapless::binary_heap::{BinaryHeap, Max};
@@ -25,7 +25,8 @@ mod app {
 
     const SYSCLK_MHZ: u32 = 32;
     const UBLOX_LEN: usize = 2048;
-    const DWT_MEAS: bool = true;
+    const DWT_MEAS: bool = false;
+    const CALLSIGN: &str = "R1BRL";
 
     stm32_tim4_monotonic!(Mono, 1_000_000);
 
@@ -161,16 +162,14 @@ mod app {
                         );
                     }
                 }
-                Event::GPS(lat, lon, time) => {
-                    rprintln!(
-                        "Event GPS: LOC ({}, {}) TIME ({}:{}:{}) (DWT {})",
-                        lat.0,
-                        lon.0,
-                        time.0,
-                        time.1,
-                        time.2 as u8,
-                        cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
-                    );
+                Event::GPS(_, t) => {
+                    if DWT_MEAS {
+                        rprintln!(
+                            "Event GPS: Time ({}:{}:{}) (DWT {})",
+                            t.0, t.1, t.2 as u8,
+                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                        );
+                    }
                 }
                 Event::NOGPS => {
                     rprintln!("Event GPS: no fix");
@@ -180,31 +179,45 @@ mod app {
 
             cx.shared.state.lock(|state| match *state {
                 State::GpsWait => match event {
-                    Event::GPS(_, _, _) => {
-                        // TODO: calculate QTH from GPS lat/lon
+                    Event::GPS((lat, lon), _) => {
                         cx.shared.wspr_msg.lock(|msg| {
+                            rprintln!("SCHED: GPS coords ({}, {})", lat as u8, lon as u8);
                             if msg.is_none() {
-                                match wspr_encoder::encode("R1BRL", "KP50", 37) {
-                                    Ok(symbols) => {
-                                        *msg = Some(symbols);
-                                        *state = State::TxWait;
+                                let coords = Coordinates{latitude: lat, longitude: lon};
+                                let mut qth: [u8; 4] = [0, 0, 0, 0];
+                                match qth_square(coords, &mut qth) {
+                                    Ok(qth) => {
+                                        rprintln!("SCHED: calculated QTH {}", qth);
+                                        match wspr_encoder::encode(CALLSIGN, qth, 37) {
+                                            Ok(symbols) => {
+                                                *msg = Some(symbols);
+                                                *state = State::TxWait;
+                                            }
+                                            Err(e) => {
+                                                rprintln!("SCHED: fatal WSPR encoding failure: {:?}", e);
+                                            }
+                                        }
                                     }
                                     Err(e) => {
-                                        rprintln!("SCHED: fatal WSPR encoding failure: {:?}", e);
+                                        rprintln!("SCHED: fatal QTH calculation failure: {:?}", e);
                                     }
                                 }
+                            } else {
+                                *state = State::TxWait;
                             }
                         });
                     }
                     _ => {}
                 },
                 State::TxWait => match event {
-                    Event::GPS(_, _, time) => {
+                    Event::GPS(_, time) => {
+                        rprintln!( "Event GPS: Time ({}:{}:{})", time.0, time.1, time.2 as u8);
                         if time.2 as u8 == 59u8 {
                             *state = State::TxReady;
                         }
                     }
                     Event::NOGPS => {
+                        rprintln!("SCHED: GPS lost in TxWait");
                         *state = State::GpsWait;
                     }
                     _ => {}
@@ -219,12 +232,18 @@ mod app {
                         }
                     },
                     Event::NOGPS => {
+                        rprintln!("SCHED: GPS lost in TxReady");
                         *state = State::GpsWait;
                     }
                     _ => {}
                 },
-                State::TxActive => {}
+                State::TxActive => {
+                }
                 State::TxDone => {
+                    rprintln!("SCHED: Tx completed");
+                    cx.shared.wspr_msg.lock(|msg| {
+                        *msg = None;
+                    });
                     *state = State::GpsWait;
                 }
                 State::Error(code) => {
@@ -275,6 +294,7 @@ mod app {
                     // TODO
                     // set_frequency(frequency);
                     // enable_tx();
+                    rprintln!("WSPR: transmit symbol {}", symbol);
                     Mono::delay(683_u64.millis()).await;
                     // disable_tx();
                 }
@@ -352,10 +372,8 @@ mod app {
 
                 if process_nmea {
                     let mut fix = false;
-                    let mut latd: u8 = 0u8;
-                    let mut latm: u8 = 0u8;
-                    let mut lond: u8 = 0u8;
-                    let mut lonm: u8 = 0u8;
+                    let mut lat: f64 = 0f64;
+                    let mut lon: f64 = 0f64;
                     let mut h = 0;
                     let mut m = 0;
                     let mut s = 0f32;
@@ -366,10 +384,8 @@ mod app {
                                 h = rmc.datetime.time.hours;
                                 m = rmc.datetime.time.minutes;
                                 s = rmc.datetime.time.seconds;
-                                latd = rmc.latitude.degrees;
-                                latm = rmc.latitude.minutes;
-                                lond = rmc.longitude.degrees;
-                                lonm = rmc.longitude.minutes;
+                                lat = rmc.latitude.as_f64();
+                                lon = rmc.longitude.as_f64();
                                 fix = true;
                             }
                             Ok(nmea0183::ParseResult::RMC(None)) => {
@@ -387,7 +403,7 @@ mod app {
                     cx.shared.queue.lock(|queue| {
                         if fix {
                             queue
-                                .push(Event::GPS((latd, latm), (lond, lonm), (h, m, s)))
+                                .push(Event::GPS((lat, lon), (h, m, s)))
                                 .ok();
                         } else {
                             queue.push(Event::NOGPS).ok();
