@@ -1,95 +1,13 @@
 #![no_main]
 #![no_std]
 
-use core::cmp::Ordering;
 use panic_rtt_target as _;
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum State {
-    GpsWait,
-    TxWait,
-    TxReady,
-    TxActive,
-    TxDone,
-    Error(u8),
-}
-
-#[derive(Clone, Copy, Default)]
-pub enum Event {
-    /// Empty
-    #[default]
-    NIL,
-    /// LED data
-    LED,
-    /// No GPS fix
-    NOGPS,
-    /// GPS data
-    GPS((u8, u8), (u8, u8), (u8, u8, f32)),
-    /// PPS data
-    PPS,
-}
-
-impl Event {
-    fn prio(self) -> u8 {
-        match self {
-            Event::NIL => 0u8,
-            Event::LED => 10u8,
-            Event::NOGPS => 20u8,
-            Event::GPS(_, _, _) => 20u8,
-            Event::PPS => 50u8,
-        }
-    }
-}
-
-/* simple ordering of events based only on their priority */
-
-impl Eq for Event {}
-
-impl PartialEq for Event {
-    fn eq(&self, other: &Event) -> bool {
-        self.prio() == other.prio()
-    }
-}
-
-impl PartialOrd for Event {
-    fn partial_cmp(&self, other: &Event) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Event {
-    fn cmp(&self, other: &Event) -> Ordering {
-        match self {
-            Event::NIL => match other {
-                Event::NIL => Ordering::Equal,
-                _ => self.prio().cmp(&other.prio()),
-            },
-            Event::LED => match other {
-                Event::LED => Ordering::Equal,
-                _ => self.prio().cmp(&other.prio()),
-            },
-            Event::NOGPS => match other {
-                Event::NOGPS => Ordering::Equal,
-                _ => self.prio().cmp(&other.prio()),
-            },
-            Event::GPS(_, _, _) => match other {
-                Event::GPS(_, _, _) => Ordering::Equal,
-                _ => self.prio().cmp(&other.prio()),
-            },
-            Event::PPS => match other {
-                Event::PPS => Ordering::Equal,
-                _ => self.prio().cmp(&other.prio()),
-            },
-        }
-    }
-}
-
-////
 
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
-    use crate::Event;
-    use crate::State;
+    use wspr_beacon::beacon::events::Event;
+    use wspr_beacon::beacon::states::State;
+    use wspr_beacon::beacon::qth::{QthError, qth_square}; 
 
     use cortex_m::singleton;
     use heapless::binary_heap::{BinaryHeap, Max};
@@ -107,7 +25,7 @@ mod app {
 
     const SYSCLK_MHZ: u32 = 32;
     const UBLOX_LEN: usize = 2048;
-    const DWT_MEAS: bool  = true;
+    const DWT_MEAS: bool = true;
 
     stm32_tim4_monotonic!(Mono, 1_000_000);
 
@@ -237,7 +155,10 @@ mod app {
             match event {
                 Event::PPS => {
                     if DWT_MEAS {
-                        rprintln!("Event PPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+                        rprintln!(
+                            "Event PPS (DWT {})",
+                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                        );
                     }
                 }
                 Event::GPS(lat, lon, time) => {
@@ -276,7 +197,7 @@ mod app {
                         });
                     }
                     _ => {}
-                }
+                },
                 State::TxWait => match event {
                     Event::GPS(_, _, time) => {
                         if time.2 as u8 == 59u8 {
@@ -287,7 +208,7 @@ mod app {
                         *state = State::GpsWait;
                     }
                     _ => {}
-                }
+                },
                 State::TxReady => match event {
                     Event::PPS => match wspr::spawn(42) {
                         Ok(_) => {
@@ -301,7 +222,7 @@ mod app {
                         *state = State::GpsWait;
                     }
                     _ => {}
-                }
+                },
                 State::TxActive => {}
                 State::TxDone => {
                     *state = State::GpsWait;
@@ -374,7 +295,10 @@ mod app {
     fn pps(mut cx: pps::Context) {
         if cx.local.pps.check_interrupt() {
             if DWT_MEAS {
-                rprintln!("IRQ PPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+                rprintln!(
+                    "IRQ PPS (DWT {})",
+                    cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                );
             }
             cx.local.pps.clear_interrupt_pending_bit();
             cx.shared.queue.lock(|queue| {
@@ -407,7 +331,10 @@ mod app {
             let _ = usart3.dr().read();
 
             if DWT_MEAS {
-                rprintln!("IRQ GPS (DWT {})", cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000);
+                rprintln!(
+                    "IRQ GPS (DWT {})",
+                    cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                );
             }
 
             if let Some(circ) = cx.local.circ.take() {
