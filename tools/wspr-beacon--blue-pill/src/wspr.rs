@@ -1,19 +1,23 @@
 #![no_main]
 #![no_std]
 
+#[cfg(feature = "rtt-log")]
 use panic_rtt_target as _;
+
+#[cfg(not(feature = "rtt-log"))]
+use panic_halt as _;
 
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
 mod app {
     use wspr_beacon::beacon::events::Event;
-    use wspr_beacon::beacon::states::State;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
+    use wspr_beacon::beacon::states::State;
+    use wspr_beacon::wspr_log;
 
     use cortex_m::singleton;
     use heapless::binary_heap::{BinaryHeap, Max};
     use nmea0183;
     use rtic_monotonics::stm32::prelude::*;
-    use rtt_target::{rprintln, rtt_init_print};
     use stm32f1xx_hal::{
         dma::CircBuffer,
         gpio::{Edge, ExtiPin, Input, Output, PushPull, gpiob::PB1, gpioc::PC13},
@@ -22,6 +26,9 @@ mod app {
         serial, timer,
     };
     use wspr_encoder;
+
+    #[cfg(feature = "rtt-log")]
+    use rtt_target::{rprintln, rtt_init_print};
 
     const SYSCLK_MHZ: u32 = 32;
     const UBLOX_LEN: usize = 2048;
@@ -67,6 +74,7 @@ mod app {
             cp.DWT.enable_cycle_counter();
         }
 
+        #[cfg(feature = "rtt-log")]
         rtt_init_print!();
 
         let mut afio = cx.device.AFIO.constrain(&mut rcc);
@@ -156,7 +164,7 @@ mod app {
             match event {
                 Event::PPS => {
                     if DWT_MEAS {
-                        rprintln!(
+                        wspr_log!(
                             "Event PPS (DWT {})",
                             cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
                         );
@@ -164,15 +172,17 @@ mod app {
                 }
                 Event::GPS(_, t) => {
                     if DWT_MEAS {
-                        rprintln!(
+                        wspr_log!(
                             "Event GPS: Time ({}:{}:{}) (DWT {})",
-                            t.0, t.1, t.2 as u8,
+                            t.0,
+                            t.1,
+                            t.2 as u8,
                             cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
                         );
                     }
                 }
                 Event::NOGPS => {
-                    rprintln!("Event GPS: no fix");
+                    wspr_log!("Event GPS: no fix");
                 }
                 _ => {}
             }
@@ -181,25 +191,31 @@ mod app {
                 State::GpsWait => match event {
                     Event::GPS((lat, lon), _) => {
                         cx.shared.wspr_msg.lock(|msg| {
-                            rprintln!("SCHED: GPS coords ({}, {})", lat as u8, lon as u8);
+                            wspr_log!("SCHED: GPS coords ({}, {})", lat as u8, lon as u8);
                             if msg.is_none() {
-                                let coords = Coordinates{latitude: lat, longitude: lon};
+                                let coords = Coordinates {
+                                    latitude: lat,
+                                    longitude: lon,
+                                };
                                 let mut qth: [u8; 4] = [0, 0, 0, 0];
                                 match qth_square(coords, &mut qth) {
                                     Ok(qth) => {
-                                        rprintln!("SCHED: calculated QTH {}", qth);
+                                        wspr_log!("SCHED: calculated QTH {}", qth);
                                         match wspr_encoder::encode(CALLSIGN, qth, 37) {
                                             Ok(symbols) => {
                                                 *msg = Some(symbols);
                                                 *state = State::TxWait;
                                             }
                                             Err(e) => {
-                                                rprintln!("SCHED: fatal WSPR encoding failure: {:?}", e);
+                                                wspr_log!(
+                                                    "SCHED: fatal WSPR encoding failure: {:?}",
+                                                    e
+                                                );
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        rprintln!("SCHED: fatal QTH calculation failure: {:?}", e);
+                                        wspr_log!("SCHED: fatal QTH calculation failure: {:?}", e);
                                     }
                                 }
                             } else {
@@ -211,13 +227,13 @@ mod app {
                 },
                 State::TxWait => match event {
                     Event::GPS(_, time) => {
-                        rprintln!( "Event GPS: Time ({}:{}:{})", time.0, time.1, time.2 as u8);
+                        wspr_log!("Event GPS: Time ({}:{}:{})", time.0, time.1, time.2 as u8);
                         if time.2 as u8 == 59u8 {
                             *state = State::TxReady;
                         }
                     }
                     Event::NOGPS => {
-                        rprintln!("SCHED: GPS lost in TxWait");
+                        wspr_log!("SCHED: GPS lost in TxWait");
                         *state = State::GpsWait;
                     }
                     _ => {}
@@ -225,29 +241,28 @@ mod app {
                 State::TxReady => match event {
                     Event::PPS => match wspr::spawn(42) {
                         Ok(_) => {
-                            rprintln!("SCHED: spawned WSPR");
+                            wspr_log!("SCHED: spawned WSPR");
                         }
                         Err(_) => {
-                            rprintln!("SCHED: WSPR is already running")
+                            wspr_log!("SCHED: WSPR is already running")
                         }
                     },
                     Event::NOGPS => {
-                        rprintln!("SCHED: GPS lost in TxReady");
+                        wspr_log!("SCHED: GPS lost in TxReady");
                         *state = State::GpsWait;
                     }
                     _ => {}
                 },
-                State::TxActive => {
-                }
+                State::TxActive => {}
                 State::TxDone => {
-                    rprintln!("SCHED: Tx completed");
+                    wspr_log!("SCHED: Tx completed");
                     cx.shared.wspr_msg.lock(|msg| {
                         *msg = None;
                     });
                     *state = State::GpsWait;
                 }
                 State::Error(code) => {
-                    rprintln!("SCHED: error code {}", code);
+                    wspr_log!("SCHED: error code {}", code);
                     *state = State::GpsWait;
                 }
             });
@@ -255,7 +270,11 @@ mod app {
             event = Event::NIL;
 
             // Keep the core awake so host-side RTT attach does not time out.
+            #[cfg(feature = "rtt-log")]
             cortex_m::asm::nop();
+
+            #[cfg(not(feature = "rtt-log"))]
+            cortex_m::asm::wfi();
         }
     }
 
@@ -264,7 +283,7 @@ mod app {
         let mut msg: Option<[u8; 162]> = None;
         let mut tx = false;
 
-        rprintln!("WSPR started: {}", x);
+        wspr_log!("WSPR started: {}", x);
 
         cx.shared.state.lock(|state| {
             if *state == State::TxReady {
@@ -294,7 +313,7 @@ mod app {
                     // TODO
                     // set_frequency(frequency);
                     // enable_tx();
-                    rprintln!("WSPR: transmit symbol {}", symbol);
+                    wspr_log!("WSPR: transmit symbol {}", symbol);
                     Mono::delay(683_u64.millis()).await;
                     // disable_tx();
                 }
@@ -315,7 +334,7 @@ mod app {
     fn pps(mut cx: pps::Context) {
         if cx.local.pps.check_interrupt() {
             if DWT_MEAS {
-                rprintln!(
+                wspr_log!(
                     "IRQ PPS (DWT {})",
                     cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
                 );
@@ -351,7 +370,7 @@ mod app {
             let _ = usart3.dr().read();
 
             if DWT_MEAS {
-                rprintln!(
+                wspr_log!(
                     "IRQ GPS (DWT {})",
                     cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
                 );
@@ -395,16 +414,14 @@ mod app {
                                 // skip other messages for now
                             }
                             Err(e) => {
-                                rprintln!("Error parsing NMEA: {}", e);
+                                wspr_log!("Error parsing NMEA: {}", e);
                             }
                         }
                     }
 
                     cx.shared.queue.lock(|queue| {
                         if fix {
-                            queue
-                                .push(Event::GPS((lat, lon), (h, m, s)))
-                                .ok();
+                            queue.push(Event::GPS((lat, lon), (h, m, s))).ok();
                         } else {
                             queue.push(Event::NOGPS).ok();
                         }
@@ -412,7 +429,7 @@ mod app {
                 }
 
                 buf[0].fill(0);
-                //rprintln!("NMEA processing: {} us", cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start) / SYSCLK_MHZ);
+                //wspr_log!("NMEA processing: {} us", cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start) / SYSCLK_MHZ);
 
                 *cx.local.circ = Some(rxdma.circ_read(buf));
             }

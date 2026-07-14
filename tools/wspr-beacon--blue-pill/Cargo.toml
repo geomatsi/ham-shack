@@ -3,6 +3,10 @@ name = "wspr-beacon"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+rtt-log = ["dep:rtt-target", "dep:panic-rtt-target"]
+
 [[bin]]
 name = "wspr"
 path = "src/wspr.rs"
@@ -15,8 +19,8 @@ cortex-m-semihosting = "0.5.0"
 panic-halt = "0.2"
 panic-semihosting = "0.6.0"
 
-panic-rtt-target = "0.2.0"
-rtt-target = "0.6.2"
+panic-rtt-target = { version = "0.2.0", optional = true }
+rtt-target = { version  = "0.6.2", optional = true }
 
 rtic = { version = "2.2.0", features = ["thumbv7-backend"] }
 rtic-monotonics = { version = "2.1.0", features = ["stm32f103c8", "stm32_tim4"] }
