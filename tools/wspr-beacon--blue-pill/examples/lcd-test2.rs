@@ -1,6 +1,8 @@
 #![no_main]
 #![no_std]
 
+use panic_halt as _;
+
 use bitbang_hal::i2c::I2cBB;
 use cortex_m_rt::entry;
 use embedded_graphics::{
@@ -11,7 +13,6 @@ use embedded_graphics::{
 };
 use hal::prelude::*;
 use nb::block;
-use panic_rtt_target as _;
 use ssd1306::{I2CDisplayInterface, Ssd1306, prelude::*};
 use stm32f1xx_hal as hal;
 use stm32f1xx_hal::pac;

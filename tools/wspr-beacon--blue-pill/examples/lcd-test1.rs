@@ -1,17 +1,25 @@
 #![no_main]
 #![no_std]
 
+#[cfg(feature = "rtt-log")]
+use panic_rtt_target as _;
+
+#[cfg(feature = "rtt-log")]
+use rtt_target::{rprintln, rtt_init_print};
+
+#[cfg(not(feature = "rtt-log"))]
+use panic_halt as _;
+
 use bitbang_hal::i2c::I2cBB;
 use core::fmt::Write;
 use cortex_m_rt::entry;
 use hal::prelude::*;
-use panic_rtt_target as _;
-use rtt_target::{rprintln, rtt_init_print};
 use ssd1306::{I2CDisplayInterface, Ssd1306, prelude::*};
 use stm32f1xx_hal as hal;
 use stm32f1xx_hal::pac;
 use stm32f1xx_hal::rcc;
 use wspr_beacon::support::bitbang_i2c_compat::Eh1BitBangI2c;
+use wspr_beacon::wspr_log;
 
 #[entry]
 fn main() -> ! {
@@ -22,6 +30,7 @@ fn main() -> ! {
         &mut flash.acr,
     );
 
+    #[cfg(feature = "rtt-log")]
     rtt_init_print!();
 
     let mut gpioa = dp.GPIOA.split(&mut rcc);
@@ -41,7 +50,7 @@ fn main() -> ! {
 
     /* Endless loop */
     loop {
-        rprintln!("test #1");
+        wspr_log!("test #1");
 
         for c in 97..123 {
             let buf = [c];
@@ -49,7 +58,7 @@ fn main() -> ! {
             let _ = display.write_str(s);
         }
 
-        rprintln!("test #2");
+        wspr_log!("test #2");
 
         for c in 65..91 {
             let buf = [c];

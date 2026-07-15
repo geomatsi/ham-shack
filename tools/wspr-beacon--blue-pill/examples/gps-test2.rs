@@ -2,14 +2,22 @@
 #![no_main]
 #![no_std]
 
+#[cfg(feature = "rtt-log")]
+use panic_rtt_target as _;
+
+#[cfg(feature = "rtt-log")]
+use rtt_target::{rprintln, rtt_init_print};
+
+#[cfg(not(feature = "rtt-log"))]
+use panic_halt as _;
+
 use core::cell::RefCell;
 use cortex_m::interrupt::{Mutex, free as interrupt_free};
 use cortex_m_rt::entry;
 use pac::interrupt;
-use panic_rtt_target as _;
-use rtt_target::{rprintln, rtt_init_print};
 use stm32f1xx_hal::gpio::*;
 use stm32f1xx_hal::{pac, prelude::*, rcc};
+use wspr_beacon::wspr_log;
 
 static PPS: Mutex<RefCell<Option<stm32f1xx_hal::gpio::gpiob::PB1<Input>>>> =
     Mutex::new(RefCell::new(None));
@@ -26,6 +34,7 @@ fn main() -> ! {
     let mut afio = dp.AFIO.constrain(&mut rcc);
     let mut gpiob = dp.GPIOB.split(&mut rcc);
 
+    #[cfg(feature = "rtt-log")]
     rtt_init_print!();
 
     interrupt_free(|cs| {
@@ -40,7 +49,7 @@ fn main() -> ! {
         pac::NVIC::unmask(pac::Interrupt::EXTI1);
     }
 
-    rprintln!("Ready to go...");
+    wspr_log!("Ready to go...");
 
     loop {
         cortex_m::asm::nop()
@@ -54,7 +63,7 @@ fn EXTI1() {
         if let Some(pps) = pps.as_mut()
             && pps.check_interrupt()
         {
-            rprintln!("PPS interrupt");
+            wspr_log!("PPS interrupt");
             pps.clear_interrupt_pending_bit();
         }
     })

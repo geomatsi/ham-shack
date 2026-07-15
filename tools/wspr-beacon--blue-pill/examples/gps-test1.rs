@@ -1,10 +1,18 @@
 #![no_main]
 #![no_std]
 
-use cortex_m_rt::entry;
+#[cfg(feature = "rtt-log")]
 use panic_rtt_target as _;
+
+#[cfg(feature = "rtt-log")]
 use rtt_target::{rprint, rtt_init_print};
+
+#[cfg(not(feature = "rtt-log"))]
+use panic_halt as _;
+
+use cortex_m_rt::entry;
 use stm32f1xx_hal::{pac, prelude::*, rcc, serial::Config};
+use wspr_beacon::wspr_lognln;
 
 #[entry]
 fn main() -> ! {
@@ -15,6 +23,7 @@ fn main() -> ! {
         &mut flash.acr,
     );
 
+    #[cfg(feature = "rtt-log")]
     rtt_init_print!();
 
     let mut afio = dp.AFIO.constrain(&mut rcc);
@@ -31,7 +40,7 @@ fn main() -> ! {
 
     loop {
         if let Ok(ch) = nb::block!(serial.rx.read()) {
-            rprint!("{}", ch as char);
+            wspr_lognln!("{}", ch as char);
         }
     }
 }

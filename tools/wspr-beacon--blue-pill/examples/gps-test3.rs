@@ -1,6 +1,15 @@
 #![no_main]
 #![no_std]
 
+#[cfg(feature = "rtt-log")]
+use panic_rtt_target as _;
+
+#[cfg(feature = "rtt-log")]
+use rtt_target::{rprint, rprintln, rtt_init_print};
+
+#[cfg(not(feature = "rtt-log"))]
+use panic_halt as _;
+
 use cortex_m_rt::entry;
 use stm32f1xx_hal::{
     pac::{self, USART3, interrupt},
@@ -9,11 +18,9 @@ use stm32f1xx_hal::{
     serial::Rx,
 };
 
-use panic_rtt_target as _;
-use rtt_target::{rprint, rprintln, rtt_init_print};
-
 use core::cell::RefCell;
 use cortex_m::interrupt::{Mutex, free as interrupt_free};
+use wspr_beacon::{wspr_log, wspr_lognln};
 
 // Neo-7M sends a groups of up to 12 msgs at once:
 //
@@ -47,6 +54,7 @@ fn main() -> ! {
         &mut flash.acr,
     );
 
+    #[cfg(feature = "rtt-log")]
     rtt_init_print!();
 
     let mut afio = dp.AFIO.constrain(&mut rcc);
@@ -90,7 +98,7 @@ fn USART3() {
                         NMEA.borrow(cs).borrow_mut()[*widx] = w;
                         *widx += 1;
                     } else {
-                        rprintln!("NMEA buffer overflow");
+                        wspr_log!("NMEA buffer overflow");
                     }
                 }
                 rx.listen_idle();
@@ -99,7 +107,7 @@ fn USART3() {
                 let mut widx = WIDX.borrow(cs).borrow_mut();
                 for i in 0..*widx {
                     let b = NMEA.borrow(cs).borrow_mut()[i];
-                    rprint!("{}", b as char);
+                    wspr_lognln!("{}", b as char);
                 }
                 *widx = 0;
             }

@@ -1,6 +1,15 @@
 #![no_main]
 #![no_std]
 
+#[cfg(feature = "rtt-log")]
+use panic_rtt_target as _;
+
+#[cfg(feature = "rtt-log")]
+use rtt_target::{rprintln, rtt_init_print};
+
+#[cfg(not(feature = "rtt-log"))]
+use panic_halt as _;
+
 use cortex_m_rt::entry;
 use stm32f1xx_hal::{
     dma::CircBuffer,
@@ -9,15 +18,13 @@ use stm32f1xx_hal::{
     rcc, serial,
 };
 
-use panic_rtt_target as _;
-use rtt_target::{rprintln, rtt_init_print};
-
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 use cortex_m::interrupt::{Mutex, free as interrupt_free};
 use cortex_m::singleton;
 
 use nmea0183::{ParseResult, Parser, Sentence};
+use wspr_beacon::wspr_log;
 
 // Neo-7M sends a groups of up to 12 msgs at once:
 //
@@ -51,6 +58,7 @@ fn main() -> ! {
         &mut flash.acr,
     );
 
+    #[cfg(feature = "rtt-log")]
     rtt_init_print!();
 
     let mut afio = dp.AFIO.constrain(&mut rcc);
@@ -94,7 +102,7 @@ fn main() -> ! {
             for result in parser.parse_from_bytes(&nmeabuf[..]) {
                 match result {
                     Ok(ParseResult::RMC(Some(rmc))) => {
-                        rprintln!(
+                        wspr_log!(
                             "GPRMC: mode {:?} date {:?} Lat {} Lon {}",
                             rmc.mode,
                             rmc.datetime,
@@ -103,23 +111,23 @@ fn main() -> ! {
                         );
                     }
                     Ok(ParseResult::RMC(None)) => {
-                        rprintln!("GPRMC: no fix...");
+                        wspr_log!("GPRMC: no fix...");
                     }
                     Ok(ParseResult::GGA(Some(gga))) => {
-                        rprintln!(
+                        wspr_log!(
                             "GPGGA: Quality {:?} satellites {}",
                             gga.gps_quality,
                             gga.sat_in_use
                         );
                     }
                     Ok(ParseResult::GGA(None)) => {
-                        rprintln!("GPGGA: no fix...");
+                        wspr_log!("GPGGA: no fix...");
                     }
                     Ok(_) => {
                         // skip other messages for now
                     }
                     Err(e) => {
-                        rprintln!("Error parsing NMEA: {}", e);
+                        wspr_log!("Error parsing NMEA: {}", e);
                     }
                 }
             }
