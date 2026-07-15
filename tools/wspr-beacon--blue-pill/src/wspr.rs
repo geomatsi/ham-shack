@@ -12,7 +12,7 @@ mod app {
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
     use wspr_beacon::beacon::states::State;
-    use wspr_beacon::wspr_log;
+    use wspr_beacon::{wspr_log, wspr_lognln};
 
     use cortex_m::singleton;
     use heapless::binary_heap::{BinaryHeap, Max};
@@ -28,11 +28,10 @@ mod app {
     use wspr_encoder;
 
     #[cfg(feature = "rtt-log")]
-    use rtt_target::{rprintln, rtt_init_print};
+    use rtt_target::{rprint, rprintln, rtt_init_print};
 
     const SYSCLK_MHZ: u32 = 32;
     const UBLOX_LEN: usize = 2048;
-    const DWT_MEAS: bool = false;
     const CALLSIGN: &str = "R1BRL";
 
     stm32_tim4_monotonic!(Mono, 1_000_000);
@@ -65,13 +64,13 @@ mod app {
                 .pclk1(16.MHz()),
             &mut flash.acr,
         );
-        let mut cp = cx.core;
 
         rcc.clocks.sysclk().to_MHz();
 
-        if DWT_MEAS {
-            cp.DCB.enable_trace();
-            cp.DWT.enable_cycle_counter();
+        #[cfg(feature = "dwt-profile")]
+        {
+            cx.core.DCB.enable_trace();
+            cx.core.DWT.enable_cycle_counter();
         }
 
         #[cfg(feature = "rtt-log")]
@@ -163,26 +162,25 @@ mod app {
 
             match event {
                 Event::PPS => {
-                    if DWT_MEAS {
-                        wspr_log!(
-                            "Event PPS (DWT {})",
-                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
-                        );
-                    }
+                    #[cfg(feature = "dwt-profile")]
+                    wspr_log!(
+                        "Event PPS: DWT {} ms",
+                        cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                    );
                 }
-                Event::GPS(_, t) => {
-                    if DWT_MEAS {
-                        wspr_log!(
-                            "Event GPS: Time ({}:{}:{}) (DWT {})",
-                            t.0,
-                            t.1,
-                            t.2 as u8,
-                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
-                        );
-                    }
+                Event::GPS(_, _) => {
+                    #[cfg(feature = "dwt-profile")]
+                    wspr_log!(
+                        "Event GPS: DWT {} ms",
+                        cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                    );
                 }
                 Event::NOGPS => {
-                    wspr_log!("Event GPS: no fix");
+                    #[cfg(feature = "dwt-profile")]
+                    wspr_log!(
+                        "Event GPS: DWT {} ms",
+                        cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                    );
                 }
                 _ => {}
             }
@@ -244,7 +242,7 @@ mod app {
                             wspr_log!("SCHED: spawned WSPR");
                         }
                         Err(_) => {
-                            wspr_log!("SCHED: WSPR is already running")
+                            wspr_log!("SCHED: failed to spawn WSPR")
                         }
                     },
                     Event::NOGPS => {
@@ -309,11 +307,11 @@ mod app {
                 let offset = 1.5;
 
                 for symbol in symbols.iter() {
-                    let _frequency = dial + offset + (0.001464 * (*symbol as f64));
+                    let frequency = dial + offset + (0.001464 * (*symbol as f64));
                     // TODO
                     // set_frequency(frequency);
                     // enable_tx();
-                    wspr_log!("WSPR: transmit symbol {}", symbol);
+                    wspr_log!("WSPR: transmit symbol {} freq {}", symbol, frequency as u16);
                     Mono::delay(683_u64.millis()).await;
                     // disable_tx();
                 }
@@ -333,12 +331,11 @@ mod app {
     #[task(binds = EXTI1, priority = 10, local = [pps], shared = [state, queue])]
     fn pps(mut cx: pps::Context) {
         if cx.local.pps.check_interrupt() {
-            if DWT_MEAS {
-                wspr_log!(
-                    "IRQ PPS (DWT {})",
-                    cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
-                );
-            }
+            #[cfg(feature = "dwt-profile")]
+            wspr_log!(
+                "IRQ PPS: DWT {} ms",
+                cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+            );
             cx.local.pps.clear_interrupt_pending_bit();
             cx.shared.queue.lock(|queue| {
                 queue.push(Event::PPS).ok();
@@ -369,17 +366,20 @@ mod app {
             let _ = usart3.sr().read();
             let _ = usart3.dr().read();
 
-            if DWT_MEAS {
-                wspr_log!(
-                    "IRQ GPS (DWT {})",
-                    cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
-                );
-            }
+            #[cfg(feature = "dwt-profile")]
+            wspr_log!(
+                "IRQ GPS: DWT {} ms",
+                cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+            );
 
             if let Some(circ) = cx.local.circ.take() {
                 let (buf, rxdma) = circ.stop();
-                let _recv = (UBLOX_LEN * 2)
-                    - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
+
+                #[cfg(feature = "rtt-log-verbose")]
+                {
+                    let recv = (UBLOX_LEN * 2) - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
+                    buf[0][..recv].iter().for_each(|&b| wspr_lognln!("{}", b as char));
+                }
 
                 cx.shared.state.lock(|state| {
                     if *state == State::TxActive {
@@ -387,9 +387,10 @@ mod app {
                     }
                 });
 
-                //let start = cortex_m::peripheral::DWT::cycle_count();
-
                 if process_nmea {
+                    #[cfg(feature = "dwt-profile")]
+                    let start = cortex_m::peripheral::DWT::cycle_count();
+
                     let mut fix = false;
                     let mut lat: f64 = 0f64;
                     let mut lon: f64 = 0f64;
@@ -426,11 +427,15 @@ mod app {
                             queue.push(Event::NOGPS).ok();
                         }
                     });
+
+                    #[cfg(feature = "dwt-profile")]
+                    wspr_log!(
+                        "IRQ GPS: NMEA processing: {} us",
+                        cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start) / SYSCLK_MHZ
+                    );
                 }
 
                 buf[0].fill(0);
-                //wspr_log!("NMEA processing: {} us", cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start) / SYSCLK_MHZ);
-
                 *cx.local.circ = Some(rxdma.circ_read(buf));
             }
         }

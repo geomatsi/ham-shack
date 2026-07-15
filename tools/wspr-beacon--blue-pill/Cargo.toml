@@ -6,6 +6,8 @@ edition = "2024"
 [features]
 default = []
 rtt-log = ["dep:rtt-target", "dep:panic-rtt-target"]
+rtt-log-verbose = ["rtt-log"]
+dwt-profile = []
 
 [[bin]]
 name = "wspr"
