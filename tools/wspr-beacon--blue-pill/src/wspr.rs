@@ -308,19 +308,22 @@ mod app {
 
         match msg {
             Some(symbols) => {
+                let symbol_duration = 683_u64.millis();
                 // 20m WSPR dial frequency in KHz
                 let dial = 14095.6;
-
                 // WSPR transmit frequencies are 1.5KHz above the dial frequency
                 let offset = 1.5;
 
-                for symbol in symbols.iter() {
+                let tx_start = Mono::now();
+
+                for (num, symbol) in symbols.iter().enumerate() {
+                    let deadline = tx_start + symbol_duration * (num as u32 + 1);
                     let _frequency = dial + offset + (0.001464 * (*symbol as f64));
                     // TODO
                     // set_frequency(frequency);
                     // enable_tx();
-                    wspr_log!("WSPR: transmit symbol {}", symbol);
-                    Mono::delay(683_u64.millis()).await;
+                    wspr_log!("WSPR: transmit symbol {}: {}", num, symbol);
+                    Mono::delay_until(deadline).await;
                     // disable_tx();
                 }
 
