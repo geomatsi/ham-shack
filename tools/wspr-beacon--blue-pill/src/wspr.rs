@@ -11,7 +11,7 @@ use panic_halt as _;
 mod app {
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
-    use wspr_beacon::beacon::states::State;
+    use wspr_beacon::beacon::states::{ErrorState, State};
     use wspr_beacon::{wspr_debug, wspr_log};
 
     #[cfg(feature = "rtt-log-debug")]
@@ -227,7 +227,7 @@ mod app {
                         });
                     }
                     Event::NOGPS => {
-                        wspr_debug!("SCHED: NOGPS GpsWait");
+                        wspr_debug!("SCHED: no GPS fix in GpsWait");
                     }
                     _ => {}
                 },
@@ -248,9 +248,11 @@ mod app {
                     Event::PPS => match wspr::spawn(42) {
                         Ok(_) => {
                             wspr_log!("SCHED: spawned WSPR");
+                            *state = State::TxActive;
                         }
                         Err(_) => {
-                            wspr_log!("SCHED: failed to spawn WSPR")
+                            wspr_log!("SCHED: failed to spawn WSPR");
+                            *state = State::TxWait;
                         }
                     },
                     Event::NOGPS => {
@@ -259,14 +261,16 @@ mod app {
                     }
                     _ => {}
                 },
-                State::TxActive => {}
-                State::TxDone => {
-                    wspr_log!("SCHED: Tx completed");
-                    cx.shared.wspr_msg.lock(|msg| {
-                        *msg = None;
-                    });
-                    *state = State::GpsWait;
-                }
+                State::TxActive => match event {
+                    Event::TXDONE => {
+                        wspr_log!("SCHED: Tx completed");
+                        cx.shared.wspr_msg.lock(|msg| {
+                            *msg = None;
+                        });
+                        *state = State::GpsWait;
+                    }
+                    _ => {}
+                },
                 State::Error(code) => {
                     wspr_log!("SCHED: error code {}", code);
                     *state = State::GpsWait;
@@ -284,62 +288,51 @@ mod app {
         }
     }
 
-    #[task(priority = 10, shared = [state, wspr_msg])]
+    #[task(priority = 10, shared = [queue, state, wspr_msg])]
     async fn wspr(mut cx: wspr::Context, x: i32) {
         let mut msg: Option<[u8; 162]> = None;
-        let mut tx = false;
 
         wspr_log!("WSPR started: {}", x);
-
-        cx.shared.state.lock(|state| {
-            if *state == State::TxReady {
-                *state = State::TxActive;
-                tx = true;
-            }
-        });
 
         cx.shared.wspr_msg.lock(|wspr_msg| {
             msg = *wspr_msg;
         });
 
-        if !tx {
-            return;
+        if let Some(symbols) = msg {
+            let symbol_duration = 683_u64.millis();
+            // 20m WSPR dial frequency in KHz
+            let dial = 14095.6;
+            // WSPR transmit frequencies are 1.5KHz above the dial frequency
+            let offset = 1.5;
+
+            let tx_start = Mono::now();
+
+            for (num, symbol) in symbols.iter().enumerate() {
+                let deadline = tx_start + symbol_duration * (num as u32 + 1);
+                let _frequency = dial + offset + (0.001464 * (*symbol as f64));
+                // TODO
+                // set_frequency(frequency);
+                // enable_tx();
+                wspr_log!("WSPR: transmit symbol {}: {}", num, symbol);
+                Mono::delay_until(deadline).await;
+                // disable_tx();
+            }
+        } else {
+            wspr_log!("WSPR: empty wspr message not expected");
         }
 
-        match msg {
-            Some(symbols) => {
-                let symbol_duration = 683_u64.millis();
-                // 20m WSPR dial frequency in KHz
-                let dial = 14095.6;
-                // WSPR transmit frequencies are 1.5KHz above the dial frequency
-                let offset = 1.5;
-
-                let tx_start = Mono::now();
-
-                for (num, symbol) in symbols.iter().enumerate() {
-                    let deadline = tx_start + symbol_duration * (num as u32 + 1);
-                    let _frequency = dial + offset + (0.001464 * (*symbol as f64));
-                    // TODO
-                    // set_frequency(frequency);
-                    // enable_tx();
-                    wspr_log!("WSPR: transmit symbol {}: {}", num, symbol);
-                    Mono::delay_until(deadline).await;
-                    // disable_tx();
-                }
-
+        cx.shared.queue.lock(|queue| {
+            if queue.push(Event::TXDONE).is_err() {
+                wspr_log!("WSPR: failed to send TXDONE event");
+                // emergency exit from TxActive state
                 cx.shared.state.lock(|state| {
-                    *state = State::TxDone;
+                    *state = State::Error(ErrorState::WSPRQueueFailure);
                 });
             }
-            None => {
-                cx.shared.state.lock(|state| {
-                    *state = State::Error(10);
-                });
-            }
-        }
+        });
     }
 
-    #[task(binds = EXTI1, priority = 10, local = [pps], shared = [state, queue])]
+    #[task(binds = EXTI1, priority = 10, local = [pps], shared = [queue, state])]
     fn pps(mut cx: pps::Context) {
         if cx.local.pps.check_interrupt() {
             #[cfg(feature = "dwt-profile")]
@@ -351,6 +344,12 @@ mod app {
             cx.shared.queue.lock(|queue| {
                 if queue.push(Event::PPS).is_err() {
                     wspr_log!("IRQ PPS: failed to send PPS event");
+                    // emergency exit from TxReady state
+                    cx.shared.state.lock(|state| {
+                        if *state == State::TxReady {
+                            *state = State::Error(ErrorState::PPSQueueFailure);
+                        }
+                    });
                 }
             });
         }

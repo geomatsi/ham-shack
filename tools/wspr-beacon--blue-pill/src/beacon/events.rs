@@ -11,6 +11,8 @@ pub enum Event {
     NOGPS,
     /// GPS data
     GPS((f64, f64), (u8, u8, f32)),
+    /// Tx result
+    TXDONE,
     /// PPS data
     PPS,
 }
@@ -22,6 +24,7 @@ impl Event {
             Event::LED => 10u8,
             Event::NOGPS => 20u8,
             Event::GPS(_, _) => 20u8,
+            Event::TXDONE => 30u8,
             Event::PPS => 50u8,
         }
     }
@@ -64,6 +67,10 @@ impl Ord for Event {
             },
             Event::PPS => match other {
                 Event::PPS => Ordering::Equal,
+                _ => self.prio().cmp(&other.prio()),
+            },
+            Event::TXDONE => match other {
+                Event::TXDONE => Ordering::Equal,
                 _ => self.prio().cmp(&other.prio()),
             },
         }
