@@ -12,7 +12,10 @@ mod app {
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
     use wspr_beacon::beacon::states::State;
-    use wspr_beacon::{wspr_log, wspr_lognln};
+    use wspr_beacon::{wspr_debug, wspr_log};
+
+    #[cfg(feature = "rtt-log-debug")]
+    use wspr_beacon::wspr_lognln;
 
     use cortex_m::singleton;
     use heapless::binary_heap::{BinaryHeap, Max};
@@ -27,8 +30,10 @@ mod app {
     };
     use wspr_encoder;
 
+    #[cfg(feature = "rtt-log-debug")]
+    use rtt_target::rprint;
     #[cfg(feature = "rtt-log")]
-    use rtt_target::{rprint, rprintln, rtt_init_print};
+    use rtt_target::{rprintln, rtt_init_print};
 
     const SYSCLK_MHZ: u32 = 32;
     const UBLOX_LEN: usize = 2048;
@@ -221,6 +226,9 @@ mod app {
                             }
                         });
                     }
+                    Event::NOGPS => {
+                        wspr_debug!("SCHED: NOGPS GpsWait");
+                    }
                     _ => {}
                 },
                 State::TxWait => match event {
@@ -307,11 +315,11 @@ mod app {
                 let offset = 1.5;
 
                 for symbol in symbols.iter() {
-                    let frequency = dial + offset + (0.001464 * (*symbol as f64));
+                    let _frequency = dial + offset + (0.001464 * (*symbol as f64));
                     // TODO
                     // set_frequency(frequency);
                     // enable_tx();
-                    wspr_log!("WSPR: transmit symbol {} freq {}", symbol, frequency as u16);
+                    wspr_log!("WSPR: transmit symbol {}", symbol);
                     Mono::delay(683_u64.millis()).await;
                     // disable_tx();
                 }
@@ -338,7 +346,9 @@ mod app {
             );
             cx.local.pps.clear_interrupt_pending_bit();
             cx.shared.queue.lock(|queue| {
-                queue.push(Event::PPS).ok();
+                if queue.push(Event::PPS).is_err() {
+                    wspr_log!("IRQ PPS: failed to send PPS event");
+                }
             });
         }
     }
@@ -346,7 +356,9 @@ mod app {
     #[task(binds = TIM3, priority = 1, local = [led, tim3], shared = [queue])]
     fn led(mut cx: led::Context) {
         cx.shared.queue.lock(|queue| {
-            queue.push(Event::LED).ok();
+            if queue.push(Event::LED).is_err() {
+                wspr_log!("IRQ LED: failed to send LED event");
+            }
         });
 
         cx.local.tim3.clear_interrupt(timer::Event::Update);
@@ -375,10 +387,13 @@ mod app {
             if let Some(circ) = cx.local.circ.take() {
                 let (buf, rxdma) = circ.stop();
 
-                #[cfg(feature = "rtt-log-verbose")]
+                #[cfg(feature = "rtt-log-debug")]
                 {
-                    let recv = (UBLOX_LEN * 2) - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
-                    buf[0][..recv].iter().for_each(|&b| wspr_lognln!("{}", b as char));
+                    let recv = (UBLOX_LEN * 2)
+                        - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
+                    buf[0][..recv]
+                        .iter()
+                        .for_each(|&b| wspr_lognln!("{}", b as char));
                 }
 
                 cx.shared.state.lock(|state| {
@@ -422,9 +437,13 @@ mod app {
 
                     cx.shared.queue.lock(|queue| {
                         if fix {
-                            queue.push(Event::GPS((lat, lon), (h, m, s))).ok();
+                            if queue.push(Event::GPS((lat, lon), (h, m, s))).is_err() {
+                                wspr_log!("IRQ GPS: failed to send GPS event");
+                            }
                         } else {
-                            queue.push(Event::NOGPS).ok();
+                            if queue.push(Event::NOGPS).is_err() {
+                                wspr_log!("IRQ GPS: failed to send NOGPS event");
+                            }
                         }
                     });
 
