@@ -24,11 +24,15 @@ mod app {
     use stm32f1xx_hal::{
         dma::CircBuffer,
         gpio::{Edge, ExtiPin, Input, Output, PushPull, gpiob::PB1, gpioc::PC13},
-        pac::{self, DMA1, USART3},
+        pac::{self, USART3},
         prelude::*,
         serial, timer,
     };
     use wspr_encoder;
+
+    // DMA1 is only touched by the rtt-log-debug byte dump in the GPS handler.
+    #[cfg(feature = "rtt-log-debug")]
+    use stm32f1xx_hal::pac::DMA1;
 
     #[cfg(feature = "rtt-log-debug")]
     use rtt_target::rprint;
@@ -437,7 +441,7 @@ mod app {
                 {
                     let recv = (UBLOX_LEN * 2)
                         - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
-                    buf[0][..recv]
+                    buf[0][..recv.min(UBLOX_LEN)]
                         .iter()
                         .for_each(|&b| wspr_lognln!("{}", b as char));
                 }
