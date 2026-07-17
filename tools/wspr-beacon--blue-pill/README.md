@@ -30,6 +30,11 @@ Attach RTT log monitor to the running binary:
 $ probe-rs attach --chip STM32F103C8 target/thumbv7m-none-eabi/debug/examples/led-test1
 ```
 
+# Test (host)
+# The default target is thumbv7m-none-eabi, so run the unit tests on the build
+# host explicitly:
+cargo test --target x86_64-unknown-linux-gnu --lib
+
 # Clean
 cargo clean
 ```
