@@ -154,137 +154,157 @@ mod app {
 
     #[idle(shared = [state, queue, wspr_msg])]
     fn idle(mut cx: idle::Context) -> ! {
-        let mut event: Event = Event::NIL;
-
         loop {
-            cx.shared.queue.lock(|queue| {
-                if !queue.is_empty()
-                    && let Some(e) = queue.pop()
-                {
-                    event = e;
-                }
-            });
+            // Drain every queued event before sleeping. Popping a single event
+            // per WFI can strand a second queued event for up to a second, since
+            // it would need an unrelated interrupt to wake the core again.
+            loop {
+                let mut event: Option<Event> = None;
+                cx.shared.queue.lock(|queue| {
+                    event = queue.pop();
+                });
 
-            match event {
-                Event::PPS => {
-                    #[cfg(feature = "dwt-profile")]
-                    wspr_log!(
-                        "Event PPS: DWT {} ms",
-                        cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
-                    );
-                }
-                Event::GPS(_, _) => {
-                    #[cfg(feature = "dwt-profile")]
-                    wspr_log!(
-                        "Event GPS: DWT {} ms",
-                        cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
-                    );
-                }
-                Event::NOGPS => {
-                    #[cfg(feature = "dwt-profile")]
-                    wspr_log!(
-                        "Event GPS: DWT {} ms",
-                        cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
-                    );
-                }
-                _ => {}
-            }
+                let Some(event) = event else {
+                    break;
+                };
 
-            cx.shared.state.lock(|state| match *state {
-                State::GpsWait => match event {
-                    Event::GPS((lat, lon), _) => {
-                        cx.shared.wspr_msg.lock(|msg| {
-                            wspr_log!("SCHED: GPS coords ({}, {})", lat as u8, lon as u8);
-                            if msg.is_none() {
-                                let coords = Coordinates {
-                                    latitude: lat,
-                                    longitude: lon,
-                                };
-                                let mut qth: [u8; 4] = [0, 0, 0, 0];
-                                match qth_square(coords, &mut qth) {
-                                    Ok(qth) => {
-                                        wspr_log!("SCHED: calculated QTH {}", qth);
-                                        match wspr_encoder::encode(CALLSIGN, qth, 37) {
-                                            Ok(symbols) => {
-                                                *msg = Some(symbols);
-                                                *state = State::TxWait;
-                                            }
-                                            Err(e) => {
-                                                wspr_log!(
-                                                    "SCHED: fatal WSPR encoding failure: {:?}",
-                                                    e
-                                                );
+                match event {
+                    Event::PPS => {
+                        #[cfg(feature = "dwt-profile")]
+                        wspr_log!(
+                            "Event PPS: DWT {} ms",
+                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                        );
+                    }
+                    Event::GPS(_, _) => {
+                        #[cfg(feature = "dwt-profile")]
+                        wspr_log!(
+                            "Event GPS: DWT {} ms",
+                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                        );
+                    }
+                    Event::NOGPS => {
+                        #[cfg(feature = "dwt-profile")]
+                        wspr_log!(
+                            "Event GPS: DWT {} ms",
+                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                        );
+                    }
+                    _ => {}
+                }
+
+                cx.shared.state.lock(|state| match *state {
+                    State::GpsWait => match event {
+                        Event::GPS((lat, lon), _) => {
+                            cx.shared.wspr_msg.lock(|msg| {
+                                wspr_log!("SCHED: GPS coords ({}, {})", lat as u8, lon as u8);
+                                if msg.is_none() {
+                                    let coords = Coordinates {
+                                        latitude: lat,
+                                        longitude: lon,
+                                    };
+                                    let mut qth: [u8; 4] = [0, 0, 0, 0];
+                                    match qth_square(coords, &mut qth) {
+                                        Ok(qth) => {
+                                            wspr_log!("SCHED: calculated QTH {}", qth);
+                                            match wspr_encoder::encode(CALLSIGN, qth, 37) {
+                                                Ok(symbols) => {
+                                                    *msg = Some(symbols);
+                                                    *state = State::TxWait;
+                                                }
+                                                Err(e) => {
+                                                    wspr_log!(
+                                                        "SCHED: fatal WSPR encoding failure: {:?}",
+                                                        e
+                                                    );
+                                                }
                                             }
                                         }
+                                        Err(e) => {
+                                            wspr_log!(
+                                                "SCHED: fatal QTH calculation failure: {:?}",
+                                                e
+                                            );
+                                        }
                                     }
-                                    Err(e) => {
-                                        wspr_log!("SCHED: fatal QTH calculation failure: {:?}", e);
-                                    }
+                                } else {
+                                    *state = State::TxWait;
                                 }
-                            } else {
+                            });
+                        }
+                        Event::NOGPS => {
+                            wspr_debug!("SCHED: no GPS fix in GpsWait");
+                        }
+                        _ => {}
+                    },
+                    State::TxWait => match event {
+                        Event::GPS(_, time) => {
+                            wspr_log!("Event GPS: Time ({}:{}:{})", time.0, time.1, time.2 as u8);
+                            if time.2 as u8 == 59u8 {
+                                *state = State::TxReady;
+                            }
+                        }
+                        Event::NOGPS => {
+                            wspr_log!("SCHED: GPS lost in TxWait");
+                            *state = State::GpsWait;
+                        }
+                        _ => {}
+                    },
+                    State::TxReady => match event {
+                        Event::PPS => match wspr::spawn(42) {
+                            Ok(_) => {
+                                wspr_log!("SCHED: spawned WSPR");
+                                *state = State::TxActive;
+                            }
+                            Err(_) => {
+                                wspr_log!("SCHED: failed to spawn WSPR");
                                 *state = State::TxWait;
                             }
-                        });
-                    }
-                    Event::NOGPS => {
-                        wspr_debug!("SCHED: no GPS fix in GpsWait");
-                    }
-                    _ => {}
-                },
-                State::TxWait => match event {
-                    Event::GPS(_, time) => {
-                        wspr_log!("Event GPS: Time ({}:{}:{})", time.0, time.1, time.2 as u8);
-                        if time.2 as u8 == 59u8 {
-                            *state = State::TxReady;
+                        },
+                        Event::NOGPS => {
+                            wspr_log!("SCHED: GPS lost in TxReady");
+                            *state = State::GpsWait;
                         }
-                    }
-                    Event::NOGPS => {
-                        wspr_log!("SCHED: GPS lost in TxWait");
-                        *state = State::GpsWait;
-                    }
-                    _ => {}
-                },
-                State::TxReady => match event {
-                    Event::PPS => match wspr::spawn(42) {
-                        Ok(_) => {
-                            wspr_log!("SCHED: spawned WSPR");
-                            *state = State::TxActive;
-                        }
-                        Err(_) => {
-                            wspr_log!("SCHED: failed to spawn WSPR");
-                            *state = State::TxWait;
-                        }
+                        _ => {}
                     },
-                    Event::NOGPS => {
-                        wspr_log!("SCHED: GPS lost in TxReady");
+                    State::TxActive => match event {
+                        Event::TXDONE => {
+                            wspr_log!("SCHED: Tx completed");
+                            cx.shared.wspr_msg.lock(|msg| {
+                                *msg = None;
+                            });
+                            *state = State::GpsWait;
+                        }
+                        _ => {}
+                    },
+                    State::Error(code) => {
+                        wspr_log!("SCHED: error code {}", code);
                         *state = State::GpsWait;
                     }
-                    _ => {}
-                },
-                State::TxActive => match event {
-                    Event::TXDONE => {
-                        wspr_log!("SCHED: Tx completed");
-                        cx.shared.wspr_msg.lock(|msg| {
-                            *msg = None;
-                        });
-                        *state = State::GpsWait;
-                    }
-                    _ => {}
-                },
-                State::Error(code) => {
-                    wspr_log!("SCHED: error code {}", code);
-                    *state = State::GpsWait;
-                }
-            });
+                });
+            }
 
-            event = Event::NIL;
+            // Queue drained. Re-check emptiness before sleeping so an event queued
+            // during the last drain iteration is picked up immediately instead of
+            // waiting for the next wake.
+            //
+            // No critical section is needed to fully close the residual
+            // check-then-WFI race: the TIM4 monotonic keeps two always-on periodic
+            // interrupts running (full- and half-period, see the rtic-monotonics
+            // stm32 backend) that wake the core roughly every 33 ms regardless of
+            // any pending `await`. An event queued in the small window between this
+            // check and the WFI is therefore drained on the next monotonic tick,
+            // far inside the 1 Hz GPS/PPS cadence, so no event is stranded in
+            // practice.
+            let empty = cx.shared.queue.lock(|queue| queue.is_empty());
+            if empty {
+                // Keep the core awake so host-side RTT attach does not time out.
+                #[cfg(feature = "rtt-log")]
+                cortex_m::asm::nop();
 
-            // Keep the core awake so host-side RTT attach does not time out.
-            #[cfg(feature = "rtt-log")]
-            cortex_m::asm::nop();
-
-            #[cfg(not(feature = "rtt-log"))]
-            cortex_m::asm::wfi();
+                #[cfg(not(feature = "rtt-log"))]
+                cortex_m::asm::wfi();
+            }
         }
     }
 
