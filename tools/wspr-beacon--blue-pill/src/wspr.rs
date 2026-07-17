@@ -345,17 +345,32 @@ mod app {
         });
 
         if let Some(symbols) = msg {
-            let symbol_duration = 683_u64.millis();
+            // WSPR modulation is defined by 8192-sample symbols at a 12 kHz rate,
+            // giving a symbol period of exactly 8192/12000 s (682.667 ms) and a
+            // tone spacing of exactly 12000/8192 Hz (1.46484375 Hz).
+            const WSPR_SYMBOL_SAMPLES: u64 = 8192;
+            const WSPR_SAMPLE_RATE_HZ: u64 = 12000;
+
             // 20m WSPR dial frequency in KHz
             let dial = 14095.6;
             // WSPR transmit frequencies are 1.5KHz above the dial frequency
             let offset = 1.5;
+            // Tone spacing = 12000/8192 Hz, expressed in KHz to match dial/offset.
+            let tone_spacing = (WSPR_SAMPLE_RATE_HZ as f64) / (WSPR_SYMBOL_SAMPLES as f64) / 1000.0;
 
             let tx_start = Mono::now();
 
             for (num, symbol) in symbols.iter().enumerate() {
-                let deadline = tx_start + symbol_duration * (num as u32 + 1);
-                let _frequency = dial + offset + (0.001464 * (*symbol as f64));
+                // Absolute deadline for the end of this symbol, computed from
+                // tx_start with exact integer math (µs). Deriving each deadline
+                // straight from tx_start — rather than summing a rounded per-symbol
+                // duration — keeps rounding below 1 µs total instead of drifting
+                // ~54 ms by symbol 161, as a rounded 683 ms period would.
+                let elapsed_us =
+                    WSPR_SYMBOL_SAMPLES * (num as u64 + 1) * 1_000_000 / WSPR_SAMPLE_RATE_HZ;
+                let deadline = tx_start + elapsed_us.micros();
+
+                let _frequency = dial + offset + (tone_spacing * (*symbol as f64));
                 // TODO
                 // set_frequency(frequency);
                 // enable_tx();
