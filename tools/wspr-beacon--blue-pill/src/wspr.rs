@@ -204,11 +204,35 @@ mod app {
                                         longitude: lon,
                                     };
                                     let mut qth: [u8; 4] = [0, 0, 0, 0];
+                                    #[cfg(feature = "dwt-profile")]
+                                    let qth_start = cortex_m::peripheral::DWT::cycle_count();
+
                                     match qth_square(coords, &mut qth) {
                                         Ok(qth) => {
+                                            #[cfg(feature = "dwt-profile")]
+                                            wspr_log!(
+                                                "SCHED: QTH calculation: {} us",
+                                                cortex_m::peripheral::DWT::cycle_count()
+                                                    .wrapping_sub(qth_start)
+                                                    / SYSCLK_MHZ
+                                            );
+
                                             wspr_log!("SCHED: calculated QTH {}", qth);
+
+                                            #[cfg(feature = "dwt-profile")]
+                                            let enc_start =
+                                                cortex_m::peripheral::DWT::cycle_count();
+
                                             match wspr_encoder::encode(CALLSIGN, qth, 37) {
                                                 Ok(symbols) => {
+                                                    #[cfg(feature = "dwt-profile")]
+                                                    wspr_log!(
+                                                        "SCHED: WSPR encoding: {} us",
+                                                        cortex_m::peripheral::DWT::cycle_count()
+                                                            .wrapping_sub(enc_start)
+                                                            / SYSCLK_MHZ
+                                                    );
+
                                                     *msg = Some(symbols);
                                                     *state = State::TxWait;
                                                 }
