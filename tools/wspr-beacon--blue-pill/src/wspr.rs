@@ -133,7 +133,7 @@ mod app {
             pac::NVIC::unmask(pac::Interrupt::EXTI1);
         }
 
-        Mono::start(SYSCLK_MHZ * 1_000_000);
+        Mono::start(rcc.clocks.pclk1_tim().to_Hz());
 
         (
             Shared {
