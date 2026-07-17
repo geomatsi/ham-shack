@@ -12,7 +12,7 @@ mod app {
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
     use wspr_beacon::beacon::states::{ErrorState, State};
-    use wspr_beacon::{wspr_debug, wspr_log};
+    use wspr_beacon::wspr_log;
 
     #[cfg(feature = "rtt-log-debug")]
     use wspr_beacon::wspr_lognln;
@@ -156,6 +156,9 @@ mod app {
 
     #[idle(shared = [state, queue, wspr_msg])]
     fn idle(mut cx: idle::Context) -> ! {
+        const NOGPS_LOG_PERIOD: u16 = 20;
+        let mut nogps_log_tick: u16 = 0;
+
         loop {
             // Drain every queued event before sleeping. Popping a single event
             // per WFI can strand a second queued event for up to a second, since
@@ -259,7 +262,10 @@ mod app {
                             });
                         }
                         Event::NOGPS => {
-                            wspr_debug!("SCHED: no GPS fix in GpsWait");
+                            if nogps_log_tick == 0 {
+                                wspr_log!("SCHED: no GPS fix in GpsWait");
+                            }
+                            nogps_log_tick = (nogps_log_tick + 1) % NOGPS_LOG_PERIOD;
                         }
                         _ => {}
                     },
