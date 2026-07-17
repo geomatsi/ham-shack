@@ -48,7 +48,7 @@ mod app {
     #[shared]
     struct Shared {
         state: State,
-        queue: BinaryHeap<Event, Max, 4>,
+        queue: BinaryHeap<Event, Max, 8>,
         wspr_msg: Option<[u8; 162]>,
     }
 
@@ -124,7 +124,7 @@ mod app {
 
         let state: State = State::GpsWait;
         let wspr_msg: Option<[u8; 162]> = None;
-        let queue: BinaryHeap<Event, Max, 4> = BinaryHeap::new();
+        let queue: BinaryHeap<Event, Max, 8> = BinaryHeap::new();
 
         //// Interrupts
 
