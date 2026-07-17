@@ -74,8 +74,6 @@ mod app {
             &mut flash.acr,
         );
 
-        rcc.clocks.sysclk().to_MHz();
-
         #[cfg(feature = "dwt-profile")]
         {
             cx.core.DCB.enable_trace();
@@ -190,7 +188,7 @@ mod app {
                     Event::NOGPS => {
                         #[cfg(feature = "dwt-profile")]
                         wspr_log!(
-                            "Event GPS: DWT {} ms",
+                            "Event NOGPS: DWT {} ms",
                             cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
                         );
                     }

@@ -28,7 +28,7 @@ macro_rules! wspr_debug{
         {
             #[cfg(feature = "rtt-log-debug")]
             rprintln!($($arg)*);
-            #[cfg(not(feature = "rtt-log"))]
+            #[cfg(not(feature = "rtt-log-debug"))]
             let _ = core::format_args!($($arg)*);
         }
     };
