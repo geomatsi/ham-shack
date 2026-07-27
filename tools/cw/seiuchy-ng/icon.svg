@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CW in Morse code">
+  <rect width="512" height="512" rx="96" fill="#008080"/>
+  <g fill="#ffffe0">
+    <!-- C : dah dit dah dit -->
+    <rect x="48"  y="168" width="120" height="44" rx="22"/>
+    <rect x="200" y="168" width="40"  height="44" rx="20"/>
+    <rect x="272" y="168" width="120" height="44" rx="22"/>
+    <rect x="424" y="168" width="40"  height="44" rx="20"/>
+    <!-- W : dit dah dah -->
+    <rect x="84"  y="300" width="40"  height="44" rx="20"/>
+    <rect x="156" y="300" width="120" height="44" rx="22"/>
+    <rect x="308" y="300" width="120" height="44" rx="22"/>
+  </g>
+</svg>

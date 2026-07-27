@@ -1,0 +1,250 @@
+/*
+ * Seiuchy-NG -- a warm paper-and-teal palette on a layout that survives a
+ * phone screen.
+ */
+
+:root {
+  --salmon: #ffa07a;
+  --paper: #ffffe0;
+  --teal: #008080;
+  --powder: #b0e0e6;
+  --ink: #202020;
+  --good: #0a7a2f;
+  --bad: #c62222;
+  --repeat: #c06000;
+  --tap: 2.75rem;   /* comfortable touch target */
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0.75rem 0.5rem calc(2rem + env(safe-area-inset-bottom));
+  background: var(--salmon);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;          /* anything smaller makes iOS zoom on focus */
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+}
+
+#page {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1rem;
+  background: var(--paper);
+  border-radius: 1rem;
+}
+
+#masthead {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+#logo { width: 2.6rem; height: 2.6rem; }
+
+#masthead h1 {
+  margin: 0;
+  font-size: 1.9rem;
+  letter-spacing: -0.01em;
+  color: var(--teal);
+}
+
+#masthead h1 span {
+  font-size: 0.75em;
+  opacity: 0.65;
+}
+
+.intro { margin: 0 0 1rem; }
+
+/* ---------------------------------------------------------------- forms -- */
+
+fieldset {
+  margin: 0 0 1.25rem;
+  padding: 0.5rem 0.75rem 0.75rem;
+  border: 1px dotted var(--teal);
+  border-radius: 0.5rem;
+}
+
+legend {
+  padding: 0 0.4rem;
+  font-weight: 600;
+  color: var(--teal);
+}
+
+#legend-settings { cursor: pointer; }
+#legend-settings::after { content: " \25BE"; }
+#legend-settings[aria-expanded="false"]::after { content: " \25B8"; }
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  margin: 0.5rem 0;
+}
+
+label { display: inline-flex; align-items: center; gap: 0.35rem; }
+label.check { gap: 0.4rem; }
+
+input, select, button {
+  font: inherit;
+  color: var(--ink);
+  min-height: var(--tap);
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--salmon);
+  border-radius: 0.4rem;
+  background: #fff;
+}
+
+input[type="number"] { width: 5rem; }
+#myname, #mygrid { width: 6.5rem; text-transform: uppercase; }
+
+input[type="checkbox"] {
+  width: 1.35rem;
+  height: 1.35rem;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--teal);
+}
+
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+
+button {
+  min-width: 5rem;
+  background: var(--powder);
+  border-color: var(--teal);
+  cursor: pointer;
+}
+button:active { background: var(--teal); color: var(--paper); }
+button.primary { background: var(--teal); color: var(--paper); font-weight: 600; }
+button.primary:active { background: var(--powder); color: var(--ink); }
+
+/* Keeps a pair of buttons together when the row wraps on a narrow screen. */
+.btns { display: flex; gap: 0.5rem; }
+.btns button { flex: 1 1 auto; }
+
+.cats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.35rem 0.75rem;
+  margin: 0.5rem 0;
+}
+
+#contest-options {
+  margin: 0.5rem 0;
+  padding: 0.25rem 0.75rem;
+  border-left: 3px solid var(--powder);
+}
+
+.links { margin: 0.75rem 0 0; font-size: 0.9rem; }
+
+.linkish {
+  min-width: 0;
+  min-height: 0;
+  padding: 0.2rem 0.1rem;
+  border: 0;
+  background: none;
+  color: var(--teal);
+  text-decoration: underline;
+}
+.linkish:active { background: none; color: var(--repeat); }
+
+/* -------------------------------------------------------------- answer --- */
+
+#wrapper { margin: 1.25rem 0; }
+
+#answer-label { display: block; margin-bottom: 0.35rem; font-weight: 600; }
+
+.answer-row { margin: 0; }
+.answer-row #itext { flex: 1 1 12rem; min-width: 0; }
+
+.score-box {
+  display: inline-block;
+  margin-top: 0.9rem;
+  padding: 0.3rem 0.9rem;
+  background: var(--powder);
+  border-radius: 0.5rem;
+  font-size: 1.15rem;
+}
+
+/* ----------------------------------------------------------------- log --- */
+
+#logcontainer {
+  width: 100%;
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--teal);
+  border-radius: 0.4rem;
+  border-spacing: 0;
+  background: #fff;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+#logcontainer th {
+  padding: 0.3rem;
+  background: var(--teal);
+  color: var(--paper);
+  font-weight: 600;
+}
+
+#logcontainer td {
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+#logcontainer td:first-child { width: 62%; font-size: 0.92rem; }
+#logcontainer tr:nth-child(even) { background: var(--powder); }
+#logcontainer tbody:empty::after { content: ""; }
+
+td.correct { color: var(--good); font-weight: 600; }
+td.wrong   { color: var(--bad); font-weight: 600; }
+td.repeat  { color: var(--repeat); font-weight: 600; }
+
+/* -------------------------------------------------------------- prose ---- */
+
+#instructions {
+  margin: 1.5rem 0;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  border: 1px solid var(--powder);
+  border-radius: 0.5rem;
+}
+
+#instructions summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--teal);
+  padding: 0.35rem 0;
+}
+
+#instructions p { margin: 0.75rem 0; }
+
+footer {
+  margin-top: 2rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--salmon);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+code {
+  padding: 0 0.2rem;
+  background: var(--powder);
+  border-radius: 0.2rem;
+  font-size: 0.95em;
+}
+
+@media (max-width: 30rem) {
+  #page { padding: 0.75rem; border-radius: 0.75rem; }
+  #logcontainer td:first-child { width: 55%; }
+  .btns { flex: 1 1 auto; }
+  .answer-row #itext { flex: 1 1 100%; }
+}

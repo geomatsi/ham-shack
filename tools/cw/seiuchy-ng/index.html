@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seiuchy NG &mdash; CW head copy trainer</title>
+<meta name="description" content="Offline Morse code trainer: copy the callsign, name, QTH, RST, rig or contest exchange out of a simulated over.">
+<meta name="theme-color" content="#008080">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Seiuchy">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="seiuchy.css">
+</head>
+<body>
+
+<main id="page">
+
+  <header id="masthead">
+    <img src="icon.svg" alt="" id="logo" width="64" height="64">
+    <h1>Seiuchy <span>NG</span></h1>
+  </header>
+
+  <p class="intro">
+    Head copy practice. An operator sends you one thing worth logging &mdash; a
+    name, a callsign, a QTH, a report &mdash; buried in the usual on-air
+    padding. Don't write it all down; catch the part that matters and type it.
+  </p>
+
+  <fieldset id="settings">
+    <legend id="legend-settings" tabindex="0" role="button" aria-expanded="true"
+            aria-controls="settings-body">Settings</legend>
+    <div id="settings-body">
+
+      <div class="row">
+        <label>Frequency
+          <input type="number" id="freq" value="400" step="10" min="200" max="1200"
+                 inputmode="numeric">Hz
+        </label>
+        <label>Speed
+          <input type="number" id="speed" value="20" step="1" min="5" max="50"
+                 inputmode="numeric">wpm
+        </label>
+        <label>Volume
+          <input type="number" id="volume" value="100" step="10" min="10" max="100"
+                 inputmode="numeric">%
+        </label>
+      </div>
+
+      <div class="row">
+        <label>Your name
+          <input type="text" id="myname" value="OM" size="8" autocapitalize="characters"
+                 autocorrect="off" spellcheck="false">
+        </label>
+        <span class="btns">
+          <button type="button" id="test">Test</button>
+          <button type="button" id="stop">Stop</button>
+        </span>
+      </div>
+
+      <div class="row">
+        <label class="check"><input type="checkbox" id="autospeed">Automatic speed adjustments</label>
+        <label class="check"><input type="checkbox" id="realqth">Real place names only</label>
+      </div>
+
+      <div class="row">
+        <label>Simulated key
+          <select id="key"></select>
+        </label>
+      </div>
+
+      <fieldset id="categories">
+        <legend>Categories</legend>
+        <div class="cats">
+          <label class="check"><input type="checkbox" class="cat" data-cat="name" checked>Name</label>
+          <label class="check"><input type="checkbox" class="cat" data-cat="rig" checked>Rig</label>
+          <label class="check"><input type="checkbox" class="cat" data-cat="call" checked>Call</label>
+          <label class="check"><input type="checkbox" class="cat" data-cat="age" checked>Age</label>
+          <label class="check"><input type="checkbox" class="cat" data-cat="rst" checked>RST</label>
+          <label class="check"><input type="checkbox" class="cat" data-cat="qth" checked>QTH</label>
+          <label class="check"><input type="checkbox" class="cat" data-cat="job">Job</label>
+          <label class="check"><input type="checkbox" class="cat" data-cat="club">Club Nr</label>
+          <label class="check"><input type="checkbox" class="cat" data-cat="contest">Contest</label>
+        </div>
+
+        <div id="contest-options" hidden>
+          <div class="row">
+            <label>Exchange
+              <select id="contest-type">
+                <option value="serial">Serial number</option>
+                <option value="grid">Grid (4 chars)</option>
+                <option value="vhf">VHF (serial + grid, 6 chars)</option>
+                <option value="fd">Field day</option>
+                <option value="loc">Full locator (6 chars)</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label>Your grid
+              <input type="text" id="mygrid" size="6" maxlength="6" placeholder="JN47"
+                     autocapitalize="characters" autocorrect="off" spellcheck="false">
+            </label>
+            <label class="check"><input type="checkbox" id="localonly">Local only</label>
+          </div>
+        </div>
+
+        <p class="links">
+          <button type="button" class="linkish" id="uncheck-all">Uncheck all</button> /
+          <button type="button" class="linkish" id="check-all">Check all</button> /
+          <button type="button" class="linkish" id="reset-score">Reset score</button>
+        </p>
+      </fieldset>
+    </div>
+  </fieldset>
+
+  <div id="wrapper">
+    <label for="itext" id="answer-label">This is what I'd log</label>
+    <div class="row answer-row">
+      <input type="text" id="itext" placeholder="Your answer" enterkeyhint="send"
+             autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+      <span class="btns">
+        <button type="button" id="play" class="primary">Start</button>
+        <button type="button" id="again">Again</button>
+      </span>
+    </div>
+    <div class="score-box">Score: <span id="score">0/0</span></div>
+  </div>
+
+  <table id="logcontainer">
+    <thead>
+      <tr><th>Past QSOs</th><th>Log</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <details id="instructions">
+    <summary>Instructions</summary>
+    <p>The filler is the point. Real overs are mostly words you never write down
+      &mdash; <i>tnx om</i>, <i>hw cpi</i>, <i>rr</i> &mdash; and hearing them
+      over and over here teaches you to let them wash past while you wait for
+      the one thing that belongs in the log. That is what lets you follow a QSO
+      as it happens instead of transcribing it first and reading it afterwards.</p>
+    <p>Set your sidetone pitch and speed, put your own name in (it gets sent back
+      at you), and untick any category you are not ready for. <b>Start</b> begins;
+      after that the button reads <b>Answer</b> and each press marks what you
+      typed and sends the next one. Enter does the same thing.</p>
+    <p>Type the answer only, not the sentence around it: <b>43</b>, not
+      &ldquo;43 years old&rdquo;. Once is enough even when it is sent twice. A
+      leading <i>nr</i> is ignored, so &ldquo;nr york&rdquo; and &ldquo;york&rdquo;
+      both pass. Rigs are the fiddly ones &mdash; type them as sent, spaces and
+      all: <b>ic 7300</b>, and <b>ic7300</b> is accepted too.</p>
+    <p>In the <b>contest</b> category, log what the number means, not what you
+      heard: a serial sent as <b>T4N</b> goes in as <b>049</b>. The leading 599
+      is optional. For a club number the number itself is what counts; if you
+      also type the club it has to be the right one.</p>
+    <p>You get a <b>C</b> back if you were right and a <b>?</b> if you were not,
+      sent slightly faster and lower so you cannot mistake it for the QSO. The
+      log shows green for right, red for wrong, and orange for right after a
+      repeat.</p>
+    <p><b>Again</b> resends the same exchange as often as you like. It costs you
+      nothing except the point: a correct answer after a repeat still counts as
+      an attempt, but does not raise your score.</p>
+    <p>With <b>automatic speed adjustments</b> the trainer chases your limit
+      &mdash; a wpm faster each time you are right, a wpm slower each time you
+      are wrong. Answering right after a repeat holds the speed where it is.</p>
+    <p>The grid contests need your own locator to be any use: with it, stations
+      turn up at plausible distances and bearings from you rather than at random
+      spots on the globe. <b>Local only</b> keeps everyone inside a few hundred
+      kilometres, which is the realistic case on VHF.</p>
+    <p>The <b>key</b> setting decides who is at the other end. A computer sends
+      perfectly and teaches you nothing about real signals. A keyer gets the dits
+      and dahs exactly right and only wanders in the gaps. A straight key wobbles
+      everywhere, and the worse the operator, the wider the wobble. A bug fires
+      machine-gun dits against hand-made dahs, and a bad one will hand you a
+      stray dot in the middle of a number. Elmer and Farnsworth leave the
+      characters crisp and stretch the spaces instead &mdash; the right way to
+      practise when the characters themselves are still hard.</p>
+    <p>Nothing here talks to the network, stores a cookie or counts you. Add it
+      to your home screen and it works with the phone in flight mode.</p>
+  </details>
+
+  <footer>
+    <p>All the words, names and places it sends come from <code>data.js</code>
+      &mdash; edit that file to make it your own.</p>
+    <p>Inspired by <b>Seiuchy</b>, the CW trainer HB9FXW ran until his site went
+      off the air. This is an independent implementation and shares none of his
+      code or material.</p>
+  </footer>
+
+</main>
+
+<script src="data.js"></script>
+<script src="random.js"></script>
+<script src="morse.js"></script>
+<script src="qso.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
