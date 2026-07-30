@@ -16,8 +16,7 @@ mod app {
     use wspr_beacon::beacon::status::Status;
     use wspr_beacon::wspr_log;
 
-    #[cfg(feature = "display-ssd1306")]
-    use wspr_beacon::hw::display_ssd1306;
+    use wspr_beacon::hw::display::{self, StatusDisplay};
 
     #[cfg(feature = "rtt-log-debug")]
     use wspr_beacon::wspr_lognln;
@@ -71,9 +70,8 @@ mod app {
         // PPS task
         pps: gpio::gpiob::PB1<Input>,
 
-        // Display task (OLED ssd1306)
-        #[cfg(feature = "display-ssd1306")]
-        display: display_ssd1306::OledDisplay,
+        // Display task
+        display: Option<display::Display>,
     }
 
     #[init]
@@ -102,19 +100,21 @@ mod app {
 
         let led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
 
-        //// Display OLED SSD1306
-        #[cfg(feature = "display-ssd1306")]
-        let disp_i2c = {
-            use bitbang_hal::i2c::I2cBB;
-            use wspr_beacon::support::bitbang_i2c_compat::Eh1BitBangI2c;
+        //// Display
+        #[cfg(not(feature = "display"))]
+        let display: Option<display::Display> = None;
 
-            let mut gpioa = cx.device.GPIOA.split(&mut rcc);
-            let scl = gpioa.pa0.into_open_drain_output(&mut gpioa.crl);
-            let sda = gpioa.pa1.into_open_drain_output(&mut gpioa.crl);
-            let mut i2c_timer = cx.device.TIM2.counter_hz(&mut rcc);
-            i2c_timer.start(100.kHz()).unwrap();
-            let i2c = I2cBB::new(scl, sda, i2c_timer);
-            Eh1BitBangI2c::new(i2c)
+        #[cfg(feature = "display")]
+        let display = {
+            let gpioa = cx.device.GPIOA.split(&mut rcc);
+
+            display::create(
+                display::DisplayParts {
+                    gpioa,
+                    tim2: cx.device.TIM2,
+                },
+                &mut rcc,
+            )
         };
 
         //// LED
@@ -152,10 +152,7 @@ mod app {
         let queue: BinaryHeap<Event, Max, 8> = BinaryHeap::new();
         let wspr_msg: Option<[u8; 162]> = None;
         let state: State = State::GpsWait;
-        let status: Status = Status {
-            state,
-            qth: None,
-        };
+        let status: Status = Status { state, qth: None };
 
         //// Interrupts
 
@@ -166,7 +163,6 @@ mod app {
 
         Mono::start(rcc.clocks.pclk1_tim().to_Hz());
 
-        #[cfg(feature = "display")]
         display_task::spawn().unwrap();
 
         (
@@ -189,8 +185,7 @@ mod app {
                 pps,
 
                 // Display task
-                #[cfg(feature = "display-ssd1306")]
-                display: display_ssd1306::create(disp_i2c),
+                display,
             },
         )
     }
@@ -409,10 +404,10 @@ mod app {
 
             for (num, symbol) in symbols.iter().enumerate() {
                 // Absolute deadline for the end of this symbol, computed from
-                // tx_start with exact integer math (µs). Deriving each deadline
-                // straight from tx_start — rather than summing a rounded per-symbol
-                // duration — keeps rounding below 1 µs total instead of drifting
-                // ~54 ms by symbol 161, as a rounded 683 ms period would.
+                // tx_start with integer math. Deriving each deadline straight from
+                // tx_start — rather than summing a rounded per-symbol duration —
+                // keeps the error per boundary instead of letting it accumulate:
+                // a rounded 683 ms period would drift ~54 ms by symbol 161.
                 let elapsed_us =
                     WSPR_SYMBOL_SAMPLES * (num as u64 + 1) * 1_000_000 / WSPR_SAMPLE_RATE_HZ;
                 let deadline = tx_start + elapsed_us.micros();
@@ -572,14 +567,26 @@ mod app {
 
     #[task(priority = 1, shared = [status], local = [display])]
     async fn display_task(mut cx: display_task::Context) {
+        const POLL_MS: u64 = 250;
+
+        let Some(display) = cx.local.display.as_mut() else {
+            return;
+        };
+
+        let mut shown: Option<Status> = None;
+
         loop {
-            #[cfg(feature = "display")]
-            {
-                let s = cx.shared.status.lock(|s| *s);
-                display_ssd1306::show(cx.local.display, &s);
+            let status = cx.shared.status.lock(|status| *status);
+
+            // Redraw only on change, the status copy above is deliberately outside the redraw
+            if shown != Some(status) {
+                if let Err(e) = display.show(&status) {
+                    wspr_log!("DISP: show failed: {:?}", e);
+                }
+                shown = Some(status);
             }
 
-            Mono::delay(500u64.millis()).await;
+            Mono::delay(POLL_MS.millis()).await;
         }
     }
 }

@@ -39,6 +39,15 @@ pub enum ErrorState {
     PPSQueueFailure,
 }
 
+impl ErrorState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ErrorState::WSPRQueueFailure => "WSPR queue",
+            ErrorState::PPSQueueFailure => "PPS queue",
+        }
+    }
+}
+
 impl fmt::Display for ErrorState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match *self {

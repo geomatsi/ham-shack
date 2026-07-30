@@ -8,8 +8,12 @@ default = []
 rtt-log = ["dep:rtt-target", "dep:panic-rtt-target"]
 rtt-log-debug = ["rtt-log"]
 dwt-profile = ["rtt-log"]
+# `display` gates the backend-agnostic plumbing and the display task; with no
+# backend named it selects the null backend. At most one backend at a time.
 display = []
-display-ssd1306 = ["display"]
+display-ssd1306 = ["display", "dep:ssd1306", "dep:embedded-graphics"]
+display-lcd1602 = ["display", "dep:hd44780-driver"]
+display-rtt = ["display", "rtt-log"]
 
 [[bin]]
 name = "wspr"
@@ -33,9 +37,11 @@ rtic-monotonics = { version = "2.1.0", features = ["stm32f103c8", "stm32_tim4"] 
 nb = "1.1"
 stm32f1xx-hal = { version = "0.11", features = ["stm32f103", "medium"] }
 
-ssd1306 = "0.10"
+ssd1306 = { version = "0.10", optional = true }
+# embedded-hal 0.2 based; the HAL implements the 0.2 pin and delay traits too
+hd44780-driver = { version = "0.4.0", optional = true }
 bitbang-hal = "0.3.3"
-embedded-graphics = "0.8"
+embedded-graphics = { version = "0.8", optional = true }
 nmea0183 = "0.6.0"
 wspr_encoder = { package = "wspr", version = "0.1.0" }
 heapless = "0.9.3"
@@ -56,10 +62,13 @@ path = "examples/led-test1.rs"
 [[example]]
 name = "lcd-test1"
 path = "examples/lcd-test1.rs"
+# ssd1306/embedded-graphics are optional deps now, pulled in by this feature
+required-features = ["display-ssd1306"]
 
 [[example]]
 name = "lcd-test2"
 path = "examples/lcd-test2.rs"
+required-features = ["display-ssd1306"]
 
 [[example]]
 name = "gen-test1"
