@@ -7,12 +7,17 @@ use panic_rtt_target as _;
 #[cfg(not(feature = "rtt-log"))]
 use panic_halt as _;
 
-#[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1])]
+#[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1, SPI2])]
 mod app {
+
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
     use wspr_beacon::beacon::states::{ErrorState, State};
+    use wspr_beacon::beacon::status::Status;
     use wspr_beacon::wspr_log;
+
+    #[cfg(feature = "display-ssd1306")]
+    use wspr_beacon::hw::display_ssd1306;
 
     #[cfg(feature = "rtt-log-debug")]
     use wspr_beacon::wspr_lognln;
@@ -23,7 +28,7 @@ mod app {
     use rtic_monotonics::stm32::prelude::*;
     use stm32f1xx_hal::{
         dma::CircBuffer,
-        gpio::{Edge, ExtiPin, Input, Output, PushPull, gpiob::PB1, gpioc::PC13},
+        gpio::{self, Edge, ExtiPin, Input, Output, PushPull},
         pac::{self, USART3},
         prelude::*,
         serial, timer,
@@ -48,6 +53,7 @@ mod app {
     #[shared]
     struct Shared {
         state: State,
+        status: Status,
         queue: BinaryHeap<Event, Max, 8>,
         wspr_msg: Option<[u8; 162]>,
     }
@@ -55,13 +61,19 @@ mod app {
     #[local]
     struct Local {
         // LED task
-        led: PC13<Output<PushPull>>,
+        led: gpio::gpioc::PC13<Output<PushPull>>,
         tim3: timer::CounterMs<pac::TIM3>,
+
         // GPS task
         circ: Option<CircBuffer<[u8; UBLOX_LEN], serial::RxDma3>>,
         parser: nmea0183::Parser,
+
         // PPS task
-        pps: PB1<Input>,
+        pps: gpio::gpiob::PB1<Input>,
+
+        // Display task (OLED ssd1306)
+        #[cfg(feature = "display-ssd1306")]
+        display: display_ssd1306::OledDisplay,
     }
 
     #[init]
@@ -89,6 +101,21 @@ mod app {
         let channels = cx.device.DMA1.split(&mut rcc);
 
         let led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
+
+        //// Display OLED SSD1306
+        #[cfg(feature = "display-ssd1306")]
+        let disp_i2c = {
+            use bitbang_hal::i2c::I2cBB;
+            use wspr_beacon::support::bitbang_i2c_compat::Eh1BitBangI2c;
+
+            let mut gpioa = cx.device.GPIOA.split(&mut rcc);
+            let scl = gpioa.pa0.into_open_drain_output(&mut gpioa.crl);
+            let sda = gpioa.pa1.into_open_drain_output(&mut gpioa.crl);
+            let mut i2c_timer = cx.device.TIM2.counter_hz(&mut rcc);
+            i2c_timer.start(100.kHz()).unwrap();
+            let i2c = I2cBB::new(scl, sda, i2c_timer);
+            Eh1BitBangI2c::new(i2c)
+        };
 
         //// LED
         let mut tim3 = cx.device.TIM3.counter_ms(&mut rcc);
@@ -122,9 +149,13 @@ mod app {
 
         //// shared globals
 
-        let state: State = State::GpsWait;
-        let wspr_msg: Option<[u8; 162]> = None;
         let queue: BinaryHeap<Event, Max, 8> = BinaryHeap::new();
+        let wspr_msg: Option<[u8; 162]> = None;
+        let state: State = State::GpsWait;
+        let status: Status = Status {
+            state,
+            qth: None,
+        };
 
         //// Interrupts
 
@@ -135,9 +166,13 @@ mod app {
 
         Mono::start(rcc.clocks.pclk1_tim().to_Hz());
 
+        #[cfg(feature = "display")]
+        display_task::spawn().unwrap();
+
         (
             Shared {
                 state,
+                status,
                 queue,
                 wspr_msg,
             },
@@ -145,11 +180,17 @@ mod app {
                 // LED task
                 led,
                 tim3,
+
                 // GPS task
                 circ: Some(circ),
                 parser: nmea_parser,
+
                 // PPS task
                 pps,
+
+                // Display task
+                #[cfg(feature = "display-ssd1306")]
+                display: display_ssd1306::create(disp_i2c),
             },
         )
     }
@@ -526,6 +567,19 @@ mod app {
                 buf[0].fill(0);
                 *cx.local.circ = Some(rxdma.circ_read(buf));
             }
+        }
+    }
+
+    #[task(priority = 1, shared = [status], local = [display])]
+    async fn display_task(mut cx: display_task::Context) {
+        loop {
+            #[cfg(feature = "display")]
+            {
+                let s = cx.shared.status.lock(|s| *s);
+                display_ssd1306::show(cx.local.display, &s);
+            }
+
+            Mono::delay(500u64.millis()).await;
         }
     }
 }

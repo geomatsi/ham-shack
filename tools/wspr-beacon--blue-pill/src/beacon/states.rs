@@ -9,6 +9,30 @@ pub enum State {
     Error(ErrorState),
 }
 
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            State::GpsWait => write!(f, "GPS Wait"),
+            State::TxWait => write!(f, "TX Wait"),
+            State::TxReady => write!(f, "TX Ready"),
+            State::TxActive => write!(f, "Transmitting"),
+            State::Error(code) => write!(f, "Err:{}", code), // Dynamically formats the number!
+        }
+    }
+}
+
+impl State {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            State::GpsWait => "GPS Wait",
+            State::TxWait => "TX Wait",
+            State::TxReady => "TX Ready",
+            State::TxActive => "TX",
+            State::Error(_) => "Error",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum ErrorState {
     WSPRQueueFailure,

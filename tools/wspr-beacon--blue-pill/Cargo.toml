@@ -8,6 +8,8 @@ default = []
 rtt-log = ["dep:rtt-target", "dep:panic-rtt-target"]
 rtt-log-debug = ["rtt-log"]
 dwt-profile = ["rtt-log"]
+display = []
+display-ssd1306 = ["display"]
 
 [[bin]]
 name = "wspr"
