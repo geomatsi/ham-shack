@@ -48,7 +48,7 @@ mod app {
     const UBLOX_LEN: usize = 2048;
     const CALLSIGN: &str = "R1BRL";
 
-    stm32_tim4_monotonic!(Mono, 1_000_000);
+    stm32_tim4_monotonic!(Mono, 100_000);
 
     #[shared]
     struct Shared {
