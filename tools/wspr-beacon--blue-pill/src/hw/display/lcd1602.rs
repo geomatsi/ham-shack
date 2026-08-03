@@ -101,19 +101,20 @@ pub fn create(p: DisplayParts, rcc: &mut Rcc) -> Option<Display> {
 }
 
 impl Display {
-    /// Write one full row, truncated and space-padded to `COLS`.
+    /// Write one full row from `parts` laid end to end, truncated and
+    /// space-padded to `COLS`.
     ///
     /// Padding rather than `clear()` on every update: the panel has no
     /// framebuffer, so short text would otherwise leave stale characters
     /// behind, and clearing the whole panel first makes the readout flicker.
-    fn row(&mut self, row: usize, text: &str) -> Result<(), DisplayError> {
+    fn row(&mut self, row: usize, parts: &[&str]) -> Result<(), DisplayError> {
         self.panel
             .set_cursor_pos(ROW_ADDR[row], &mut self.delay)
             .map_err(|_| DisplayError::Bus)?;
 
         let mut written = 0;
 
-        for c in text.chars().take(COLS) {
+        for c in parts.iter().flat_map(|part| part.chars()).take(COLS) {
             // The controller's character ROM is byte-oriented, so anything
             // outside ASCII would be mangled on the way out.
             let c = if c.is_ascii_graphic() || c == ' ' {
@@ -148,11 +149,19 @@ impl StatusDisplay for Display {
         let shown = self.shown;
 
         if shown.map(|shown| shown.state) != Some(status.state) {
-            self.row(0, status.state.as_str())?;
+            self.row(0, &[status.state.as_str()])?;
         }
 
-        if shown.map(|shown| shown.qth) != Some(status.qth) {
-            self.row(1, status.qth_str().unwrap_or(""))?;
+        // Two rows for three fields, so the bottom one carries both the square
+        // and the clock: "KO85 12:34" fits inside 16 columns with room to spare.
+        if shown.map(|shown| (shown.qth, shown.time)) != Some((status.qth, status.time)) {
+            let mut buf = [0u8; 5];
+            let time = match status.time {
+                Some(time) => time.hhmm(&mut buf),
+                None => "",
+            };
+
+            self.row(1, &[status.qth_str().unwrap_or(""), " ", time])?;
         }
 
         // Only after both rows are on the panel: a partial failure leaves the

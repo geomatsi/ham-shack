@@ -25,9 +25,15 @@ impl StatusDisplay for Display {
     fn show(&mut self, status: &Status) -> Result<(), DisplayError> {
         let qth = status.qth_str().unwrap_or("----");
 
+        let mut buf = [0u8; 5];
+        let time = match status.time {
+            Some(time) => time.hhmm(&mut buf),
+            None => "--:--",
+        };
+
         match status.state {
             State::Error(code) => wspr_log!("DISP: {} [{}]", status.state.as_str(), code.as_str()),
-            _ => wspr_log!("DISP: {} qth {}", status.state.as_str(), qth),
+            _ => wspr_log!("DISP: {} qth {} utc {}", status.state.as_str(), qth, time),
         }
 
         Ok(())

@@ -107,6 +107,11 @@ impl StatusDisplay for Display {
             self.line(qth, LINE_H)?;
         }
 
+        if let Some(time) = status.time {
+            let mut buf = [0u8; 5];
+            self.line(time.hhmm(&mut buf), 2 * LINE_H)?;
+        }
+
         self.panel.flush().map_err(|_| DisplayError::Bus)
     }
 }
