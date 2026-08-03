@@ -334,7 +334,11 @@ mod app {
                         }
                         Event::NOGPS => {
                             wspr_log!("SCHED: GPS lost in TxWait");
+                            cx.shared.wspr_msg.lock(|msg| {
+                                *msg = None;
+                            });
                             status.state = State::GpsWait;
+                            status.qth = None;
                         }
                         _ => {}
                     },
@@ -351,7 +355,11 @@ mod app {
                         },
                         Event::NOGPS => {
                             wspr_log!("SCHED: GPS lost in TxReady");
+                            cx.shared.wspr_msg.lock(|msg| {
+                                *msg = None;
+                            });
                             status.state = State::GpsWait;
+                            status.qth = None;
                         }
                         _ => {}
                     },
@@ -364,14 +372,16 @@ mod app {
                             });
                             status.state = State::GpsWait;
                             status.qth = None;
-                            // TODO
-                            // - reset msg and qth on any GPS loss and transition to GPSWait (?)
                         }
                         _ => {}
                     },
                     State::Error(code) => {
                         wspr_log!("SCHED: error code {}", code);
+                        cx.shared.wspr_msg.lock(|msg| {
+                            *msg = None;
+                        });
                         status.state = State::GpsWait;
+                        status.qth = None;
                         // TODO
                         // - add last error state to Status and display it for diagnostic purposes
                     }
