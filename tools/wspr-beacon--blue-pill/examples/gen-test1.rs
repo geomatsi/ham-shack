@@ -4,9 +4,9 @@
 use cortex_m as cm;
 use cortex_m_rt::entry;
 use panic_semihosting as _;
+use si5351::{ClockOutput, PLL, Si5351, Si5351Device};
 use stm32f1xx_hal::pac;
 use stm32f1xx_hal::rcc;
-use wspr_beacon::support::si5351::{ClockOutput, PLL, Si5351, Si5351Device};
 
 use stm32f1xx_hal::{
     i2c::{DutyCycle, Mode},
