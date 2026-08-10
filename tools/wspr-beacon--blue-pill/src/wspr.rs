@@ -13,7 +13,7 @@ mod app {
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
     use wspr_beacon::beacon::states::{ErrorState, State};
-    use wspr_beacon::beacon::status::{Status, Time};
+    use wspr_beacon::beacon::status::{DisplayInfo, Status, Time};
     use wspr_beacon::wspr_log;
 
     use wspr_beacon::hw::display::{self, StatusDisplay};
@@ -53,7 +53,6 @@ mod app {
     struct Shared {
         status: Status,
         queue: BinaryHeap<Event, Max, 8>,
-        wspr_msg: Option<[u8; 162]>,
     }
 
     #[local]
@@ -149,12 +148,7 @@ mod app {
         //// shared globals
 
         let queue: BinaryHeap<Event, Max, 8> = BinaryHeap::new();
-        let wspr_msg: Option<[u8; 162]> = None;
-        let status: Status = Status {
-            state: State::GpsWait,
-            qth: None,
-            time: None,
-        };
+        let status = Status::new();
 
         //// Interrupts
 
@@ -168,11 +162,7 @@ mod app {
         display_task::spawn().unwrap();
 
         (
-            Shared {
-                status,
-                queue,
-                wspr_msg,
-            },
+            Shared { status, queue },
             Local {
                 // LED task
                 led,
@@ -191,7 +181,7 @@ mod app {
         )
     }
 
-    #[idle(shared = [status, queue, wspr_msg])]
+    #[idle(shared = [status, queue])]
     fn idle(mut cx: idle::Context) -> ! {
         const NOGPS_LOG_PERIOD: u16 = 20;
         let mut nogps_log_tick: u16 = 0;
@@ -246,76 +236,73 @@ mod app {
                 cx.shared.status.lock(|status| match status.state {
                     State::GpsWait => match event {
                         Event::GPS((lat, lon), _) => {
-                            cx.shared.wspr_msg.lock(|msg| {
-                                wspr_log!("SCHED: GPS coords ({}, {})", lat as u8, lon as u8);
-                                if msg.is_none() {
-                                    let coords = Coordinates {
-                                        latitude: lat,
-                                        longitude: lon,
-                                    };
-                                    let mut qth_buf: [u8; 4] = [0, 0, 0, 0];
-                                    #[cfg(feature = "dwt-profile")]
-                                    let qth_start = cortex_m::peripheral::DWT::cycle_count();
+                            wspr_log!("SCHED: GPS coords ({}, {})", lat as u8, lon as u8);
 
-                                    let encoded = match qth_square(coords, &mut qth_buf) {
-                                        Ok(qth) => {
-                                            #[cfg(feature = "dwt-profile")]
-                                            wspr_log!(
-                                                "SCHED: QTH calculation: {} us",
-                                                cortex_m::peripheral::DWT::cycle_count()
-                                                    .wrapping_sub(qth_start)
-                                                    / SYSCLK_MHZ
-                                            );
+                            if status.msg.is_some() {
+                                status.state = State::TxWait;
+                            } else {
+                                let coords = Coordinates {
+                                    latitude: lat,
+                                    longitude: lon,
+                                };
+                                let mut qth_buf: [u8; 4] = [0, 0, 0, 0];
+                                #[cfg(feature = "dwt-profile")]
+                                let qth_start = cortex_m::peripheral::DWT::cycle_count();
 
-                                            wspr_log!("SCHED: calculated QTH {}", qth);
+                                let encoded = match qth_square(coords, &mut qth_buf) {
+                                    Ok(qth) => {
+                                        #[cfg(feature = "dwt-profile")]
+                                        wspr_log!(
+                                            "SCHED: QTH calculation: {} us",
+                                            cortex_m::peripheral::DWT::cycle_count()
+                                                .wrapping_sub(qth_start)
+                                                / SYSCLK_MHZ
+                                        );
 
-                                            #[cfg(feature = "dwt-profile")]
-                                            let enc_start =
-                                                cortex_m::peripheral::DWT::cycle_count();
+                                        wspr_log!("SCHED: calculated QTH {}", qth);
 
-                                            match wspr_encoder::encode(CALLSIGN, qth, 37) {
-                                                Ok(symbols) => {
-                                                    #[cfg(feature = "dwt-profile")]
-                                                    wspr_log!(
-                                                        "SCHED: WSPR encoding: {} us",
-                                                        cortex_m::peripheral::DWT::cycle_count()
-                                                            .wrapping_sub(enc_start)
-                                                            / SYSCLK_MHZ
-                                                    );
+                                        #[cfg(feature = "dwt-profile")]
+                                        let enc_start = cortex_m::peripheral::DWT::cycle_count();
 
-                                                    *msg = Some(symbols);
-                                                    status.state = State::TxWait;
+                                        match wspr_encoder::encode(CALLSIGN, qth, 37) {
+                                            Ok(symbols) => {
+                                                #[cfg(feature = "dwt-profile")]
+                                                wspr_log!(
+                                                    "SCHED: WSPR encoding: {} us",
+                                                    cortex_m::peripheral::DWT::cycle_count()
+                                                        .wrapping_sub(enc_start)
+                                                        / SYSCLK_MHZ
+                                                );
 
-                                                    true
-                                                }
-                                                Err(e) => {
-                                                    wspr_log!(
-                                                        "SCHED: fatal WSPR encoding failure: {:?}",
-                                                        e
-                                                    );
+                                                status.msg = Some(symbols);
+                                                status.state = State::TxWait;
 
-                                                    false
-                                                }
+                                                true
+                                            }
+                                            Err(e) => {
+                                                wspr_log!(
+                                                    "SCHED: fatal WSPR encoding failure: {:?}",
+                                                    e
+                                                );
+
+                                                false
                                             }
                                         }
-                                        Err(e) => {
-                                            wspr_log!(
-                                                "SCHED: fatal QTH calculation failure: {:?}",
-                                                e
-                                            );
-
-                                            false
-                                        }
-                                    };
-
-                                    // Display QTH only if the WSPR encoding succeeded
-                                    if encoded {
-                                        status.qth = Some(qth_buf);
                                     }
-                                } else {
-                                    status.state = State::TxWait;
+                                    Err(e) => {
+                                        wspr_log!("SCHED: fatal QTH calculation failure: {:?}", e);
+
+                                        false
+                                    }
+                                };
+
+                                // Display QTH only if the WSPR encoding succeeded. It is
+                                // published here rather than next to `status.msg` above
+                                // because `qth` borrows `qth_buf` until the match ends.
+                                if encoded {
+                                    status.qth = Some(qth_buf);
                                 }
-                            });
+                            }
                         }
                         Event::NOGPS => {
                             if nogps_log_tick == 0 {
@@ -334,11 +321,7 @@ mod app {
                         }
                         Event::NOGPS => {
                             wspr_log!("SCHED: GPS lost in TxWait");
-                            cx.shared.wspr_msg.lock(|msg| {
-                                *msg = None;
-                            });
-                            status.state = State::GpsWait;
-                            status.qth = None;
+                            status.reset();
                         }
                         _ => {}
                     },
@@ -355,33 +338,21 @@ mod app {
                         },
                         Event::NOGPS => {
                             wspr_log!("SCHED: GPS lost in TxReady");
-                            cx.shared.wspr_msg.lock(|msg| {
-                                *msg = None;
-                            });
-                            status.state = State::GpsWait;
-                            status.qth = None;
+                            status.reset();
                         }
                         _ => {}
                     },
                     State::TxActive => match event {
                         Event::TXDONE => {
-                            // Reset WPSR message, GPS state, and QTH here to start over again before the next transmission
+                            // Start over from a fresh fix before the next transmission
                             wspr_log!("SCHED: Tx completed");
-                            cx.shared.wspr_msg.lock(|msg| {
-                                *msg = None;
-                            });
-                            status.state = State::GpsWait;
-                            status.qth = None;
+                            status.reset();
                         }
                         _ => {}
                     },
                     State::Error(code) => {
                         wspr_log!("SCHED: error code {}", code);
-                        cx.shared.wspr_msg.lock(|msg| {
-                            *msg = None;
-                        });
-                        status.state = State::GpsWait;
-                        status.qth = None;
+                        status.reset();
                         // TODO
                         // - add last error state to Status and display it for diagnostic purposes
                     }
@@ -413,15 +384,13 @@ mod app {
         }
     }
 
-    #[task(priority = 10, shared = [queue, status, wspr_msg])]
+    #[task(priority = 10, shared = [queue, status])]
     async fn wspr(mut cx: wspr::Context, x: i32) {
-        let mut msg: Option<[u8; 162]> = None;
-
         wspr_log!("WSPR started: {}", x);
 
-        cx.shared.wspr_msg.lock(|wspr_msg| {
-            msg = *wspr_msg;
-        });
+        // Only the message is copied out, not the whole `Status`: the symbols
+        // are needed for the next two minutes, the rest of the struct is not.
+        let msg = cx.shared.status.lock(|status| status.msg);
 
         if let Some(symbols) = msg {
             // WSPR modulation is defined by 8192-sample symbols at a 12 kHz rate,
@@ -610,17 +579,20 @@ mod app {
             return;
         };
 
-        let mut shown: Option<Status> = None;
+        let mut shown: Option<DisplayInfo> = None;
 
         loop {
-            let status = cx.shared.status.lock(|status| *status);
+            // A `DisplayInfo` rather than the whole `Status`: this copy runs
+            // with the `status` ceiling priority held, which masks the PPS edge
+            // the transmission is aligned to, so it stays a few bytes wide.
+            let info = cx.shared.status.lock(|status| status.display_info());
 
-            // Redraw only on change, the status copy above is deliberately outside the redraw
-            if shown != Some(status) {
-                if let Err(e) = display.show(&status) {
+            // Redraw only on change, the snapshot above is deliberately outside the redraw
+            if shown != Some(info) {
+                if let Err(e) = display.show(&info) {
                     wspr_log!("DISP: show failed: {:?}", e);
                 }
-                shown = Some(status);
+                shown = Some(info);
             }
 
             Mono::delay(POLL_MS.millis()).await;

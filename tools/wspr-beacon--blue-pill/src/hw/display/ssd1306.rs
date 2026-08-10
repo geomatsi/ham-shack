@@ -7,7 +7,7 @@
 //! Panel size, font and line layout are private to this module.
 
 use super::{DisplayError, DisplayParts, StatusDisplay};
-use crate::beacon::status::Status;
+use crate::beacon::status::DisplayInfo;
 use crate::support::bitbang_i2c_compat::Eh1BitBangI2c;
 
 use bitbang_hal::i2c::I2cBB;
@@ -96,18 +96,18 @@ impl StatusDisplay for Display {
     /// through `clear()`: repainting just the affected region instead keeps the
     /// dirty rectangle small, which is ~28 ms for one full-width 8-pixel page
     /// and ~4 ms for a few columns.
-    fn show(&mut self, status: &Status) -> Result<(), DisplayError> {
+    fn show(&mut self, info: &DisplayInfo) -> Result<(), DisplayError> {
         self.panel
             .clear(BinaryColor::Off)
             .map_err(|_| DisplayError::Bus)?;
 
-        self.line(status.state.as_str(), 0)?;
+        self.line(info.state.as_str(), 0)?;
 
-        if let Some(qth) = status.qth_str() {
+        if let Some(qth) = info.qth_str() {
             self.line(qth, LINE_H)?;
         }
 
-        if let Some(time) = status.time {
+        if let Some(time) = info.time {
             let mut buf = [0u8; 5];
             self.line(time.hhmm(&mut buf), 2 * LINE_H)?;
         }

@@ -28,7 +28,7 @@
 //! Panel geometry and line layout are private to this module.
 
 use super::{DisplayError, DisplayParts, StatusDisplay};
-use crate::beacon::status::Status;
+use crate::beacon::status::DisplayInfo;
 
 use hd44780_driver::bus::FourBitBus;
 use hd44780_driver::{Cursor, CursorBlink, Display as PanelPower, DisplayMode, HD44780};
@@ -57,8 +57,8 @@ type Delay = timer::DelayUs<pac::TIM2>;
 pub struct Display {
     panel: Panel,
     delay: Delay,
-    /// Last status put on the panel, for the per-row skip in `show`.
-    shown: Option<Status>,
+    /// Last info put on the panel, for the per-row skip in `show`.
+    shown: Option<DisplayInfo>,
 }
 
 pub fn create(p: DisplayParts, rcc: &mut Rcc) -> Option<Display> {
@@ -145,28 +145,28 @@ impl StatusDisplay for Display {
     /// The driver holds E high for 2 ms per nibble, so a character costs ~4.1 ms
     /// and a full 2x16 refresh blocks for ~139 ms. Skipping untouched rows keeps
     /// the common single-field update to roughly half of that.
-    fn show(&mut self, status: &Status) -> Result<(), DisplayError> {
+    fn show(&mut self, info: &DisplayInfo) -> Result<(), DisplayError> {
         let shown = self.shown;
 
-        if shown.map(|shown| shown.state) != Some(status.state) {
-            self.row(0, &[status.state.as_str()])?;
+        if shown.map(|shown| shown.state) != Some(info.state) {
+            self.row(0, &[info.state.as_str()])?;
         }
 
         // Two rows for three fields, so the bottom one carries both the square
         // and the clock: "KO85 12:34" fits inside 16 columns with room to spare.
-        if shown.map(|shown| (shown.qth, shown.time)) != Some((status.qth, status.time)) {
+        if shown.map(|shown| (shown.qth, shown.time)) != Some((info.qth, info.time)) {
             let mut buf = [0u8; 5];
-            let time = match status.time {
+            let time = match info.time {
                 Some(time) => time.hhmm(&mut buf),
                 None => "",
             };
 
-            self.row(1, &[status.qth_str().unwrap_or(""), " ", time])?;
+            self.row(1, &[info.qth_str().unwrap_or(""), " ", time])?;
         }
 
         // Only after both rows are on the panel: a partial failure leaves the
         // cache stale so the next call rewrites everything.
-        self.shown = Some(*status);
+        self.shown = Some(*info);
 
         Ok(())
     }

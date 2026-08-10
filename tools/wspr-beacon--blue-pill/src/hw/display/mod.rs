@@ -4,11 +4,15 @@
 //! the same two items — `Display` and `create` — which this module re-exports,
 //! so the application never names a concrete backend, bus or panel.
 //!
-//! `&Status` is the whole interface. How a backend turns it into something
+//! `&DisplayInfo` is the whole interface. How a backend turns it into something
 //! visible is entirely its own business: panel geometry, fonts, line order and
 //! truncation all stay private to its module.
+//!
+//! The beacon's own `Status` deliberately does not come through here: it also
+//! carries the encoded transmit message, which no panel has any business
+//! seeing, and which would make every snapshot and redraw check 17x larger.
 
-use crate::beacon::status::Status;
+use crate::beacon::status::DisplayInfo;
 
 use stm32f1xx_hal::{gpio, pac};
 
@@ -19,11 +23,11 @@ pub enum DisplayError {
 }
 
 pub trait StatusDisplay {
-    /// Render `status`.
+    /// Render `info`.
     ///
     /// Errors are reported by the caller and otherwise ignored: a dead panel
     /// must never stop the beacon from transmitting.
-    fn show(&mut self, status: &Status) -> Result<(), DisplayError>;
+    fn show(&mut self, info: &DisplayInfo) -> Result<(), DisplayError>;
 }
 
 /// Peripherals `init()` hands to whichever backend was built.

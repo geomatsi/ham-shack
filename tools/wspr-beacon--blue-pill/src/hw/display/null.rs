@@ -4,7 +4,7 @@
 //! host-side tests something to instantiate.
 
 use super::{DisplayError, DisplayParts, StatusDisplay};
-use crate::beacon::status::Status;
+use crate::beacon::status::DisplayInfo;
 
 use stm32f1xx_hal::rcc::Rcc;
 
@@ -15,7 +15,7 @@ pub fn create(_p: DisplayParts, _rcc: &mut Rcc) -> Option<Display> {
 }
 
 impl StatusDisplay for Display {
-    fn show(&mut self, _status: &Status) -> Result<(), DisplayError> {
+    fn show(&mut self, _info: &DisplayInfo) -> Result<(), DisplayError> {
         Ok(())
     }
 }
