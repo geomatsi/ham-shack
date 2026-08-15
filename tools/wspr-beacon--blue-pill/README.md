@@ -31,9 +31,10 @@ $ probe-rs attach --chip STM32F103C8 target/thumbv7m-none-eabi/debug/examples/le
 ```
 
 # Test (host)
-# The default target is thumbv7m-none-eabi, so run the unit tests on the build
-# host explicitly:
-cargo test --target x86_64-unknown-linux-gnu --lib
+# `cargo test` cannot be used: it builds every declared dependency to compile
+# the lib, and rtic does not compile for a host target. Platform-agnostic
+# modules are tested one file at a time instead.
+rustc --test --edition 2024 -o /tmp/qth src/beacon/qth.rs && /tmp/qth
 
 # Clean
 cargo clean
