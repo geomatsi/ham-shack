@@ -23,8 +23,8 @@
 //! Resolution is one tick, 100 ppb, hence the 300 ppb threshold: anything
 //! tighter chases quantization.
 //!
-//! The correction is the linearisation `f -= f * ppb / 1e9` in microhertz,
-//! applied to the counted output itself. So CLK1 stops dividing 700 MHz exactly
+//! The correction comes from `si5351::calibrate` and is applied here to the
+//! counted output itself. So CLK1 stops dividing 700 MHz exactly
 //! and the driver's rounding joins the loop, well under a tick; and the loop is
 //! closed, so the linearisation's residual is absorbed by the next gate. The
 //! beacon proper counts an integer-divider CLK1 and corrects CLK0 — the same
@@ -63,7 +63,7 @@ use panic_halt as _;
 use core::sync::atomic::{AtomicBool, Ordering};
 use cortex_m_rt::entry;
 use pac::interrupt;
-use si5351::{ClockOutput, DriveStrength, Frequency, PLL, Si5351, Si5351Device};
+use si5351::{ClockOutput, DriveStrength, Frequency, PLL, Si5351, Si5351Device, calibrate};
 use stm32f1xx_hal::{
     gpio::*,
     i2c::{DutyCycle, Mode},
@@ -77,6 +77,7 @@ use wspr_beacon::wspr_log;
 static PPS_EVT: AtomicBool = AtomicBool::new(false);
 
 const CLK1_FREQ: u32 = 10_000_000;
+const NOMINAL: Frequency = Frequency::from_hz(CLK1_FREQ);
 const PLL_FREQ: u32 = 700_000_000;
 
 #[entry]
@@ -220,7 +221,7 @@ fn main() -> ! {
         let ticks = read();
         clear();
 
-        let ppb: i64 = (ticks as i64 - CLK1_FREQ as i64) * 100i64; // delta for 10MHz (10*ppm) multiply by 100 to get delta for 1000MHz (ppb)
+        let ppb = calibrate::error_ppb(ticks, NOMINAL, 1);
         wspr_log!(
             "gate: {} ticks ({:+} vs nominal) ppb {}",
             ticks,
@@ -229,9 +230,8 @@ fn main() -> ! {
         );
 
         // No crystal is out by 200 ppm, so this is a lost or doubled PPS rather
-        // than a measurement. Rejecting it also keeps the product below the i64
-        // range in the correction.
-        if ppb.abs() > 200_000 {
+        // than a measurement.
+        if !calibrate::plausible(ppb) {
             wspr_log!("|pbb| {} is too large to be true, gate rejected", ppb.abs());
             continue;
         }
@@ -243,14 +243,7 @@ fn main() -> ! {
         // Note: a bit more advanced math such as averaging is deliberately
         // avoided in this simple example.
         if c > 5 && ppb.abs() > 300 {
-            // Microhertz, not hertz: as_hz would round away up to 1 Hz, which is
-            // 100 ppb here, and always downwards. That alone would keep the loop
-            // dithering at the size of the error it is trying to null.
-            freq = Frequency::from_microhz(
-                (Frequency::as_microhz(freq) as i64
-                    - (Frequency::as_microhz(freq) as i64 * ppb / 1_000_000_000i64))
-                    as u64,
-            );
+            freq = calibrate::correct(freq, ppb);
             wspr_log!("apply correction to freq {} uHz", freq.as_microhz());
             clock
                 .set_clock_frequency_fixed_pll(ClockOutput::Clk1, freq)

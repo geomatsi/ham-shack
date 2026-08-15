@@ -626,7 +626,7 @@ checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 [[package]]
 name = "si5351"
 version = "0.2.0"
-source = "git+https://github.com/geomatsi/si5351?branch=master#9e1e6b75bc3bcc0f1800661d3e1ecaeb3d95420d"
+source = "git+https://github.com/geomatsi/si5351?branch=master#1168dbec7605333792cd1cda558085cc14b36b54"
 dependencies = [
  "bitflags 2.13.1",
  "embedded-hal 1.0.0",
