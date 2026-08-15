@@ -79,6 +79,10 @@ name = "gen-test1"
 path = "examples/gen-test1.rs"
 
 [[example]]
+name = "gen-test2"
+path = "examples/gen-test2.rs"
+
+[[example]]
 name = "gps-test1"
 path = "examples/gps-test1.rs"
 
