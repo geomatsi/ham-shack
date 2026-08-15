@@ -4,7 +4,7 @@
 use cortex_m as cm;
 use cortex_m_rt::entry;
 use panic_semihosting as _;
-use si5351::{ClockOutput, PLL, Si5351, Si5351Device};
+use si5351::{ClockOutput, Frequency, PLL, Si5351, Si5351Device};
 use stm32f1xx_hal::pac;
 use stm32f1xx_hal::rcc;
 
@@ -51,7 +51,7 @@ fn main() -> ! {
     loop {
         for freq in freqs {
             clock
-                .set_frequency(PLL::A, ClockOutput::Clk0, freq)
+                .set_frequency(PLL::A, ClockOutput::Clk0, Frequency::from_hz(freq))
                 .unwrap();
             clock.set_clock_enabled(ClockOutput::Clk0, true);
             clock.flush_clock_control(ClockOutput::Clk0).unwrap();
