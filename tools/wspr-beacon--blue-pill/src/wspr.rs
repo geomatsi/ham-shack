@@ -57,10 +57,6 @@ mod app {
 
     #[local]
     struct Local {
-        // LED task
-        led: gpio::gpioc::PC13<Output<PushPull>>,
-        tim3: timer::CounterMs<pac::TIM3>,
-
         // GPS task
         circ: Option<CircBuffer<[u8; UBLOX_LEN], serial::RxDma3>>,
         parser: nmea0183::Parser,
@@ -93,10 +89,8 @@ mod app {
 
         let mut afio = cx.device.AFIO.constrain(&mut rcc);
         let mut gpiob = cx.device.GPIOB.split(&mut rcc);
-        let mut gpioc = cx.device.GPIOC.split(&mut rcc);
         let channels = cx.device.DMA1.split(&mut rcc);
 
-        let led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
 
         //// Display
         #[cfg(not(feature = "display"))]
@@ -120,11 +114,6 @@ mod app {
                 &mut rcc,
             )
         };
-
-        //// LED
-        let mut tim3 = cx.device.TIM3.counter_ms(&mut rcc);
-        tim3.start(5000u32.millis()).unwrap();
-        tim3.listen(timer::Event::Update);
 
         //// PPS
         let mut pps = gpiob.pb1.into_floating_input(&mut gpiob.crl);
@@ -170,10 +159,6 @@ mod app {
         (
             Shared { status, queue },
             Local {
-                // LED task
-                led,
-                tim3,
-
                 // GPS task
                 circ: Some(circ),
                 parser: nmea_parser,
@@ -468,18 +453,6 @@ mod app {
                 }
             });
         }
-    }
-
-    #[task(binds = TIM3, priority = 1, local = [led, tim3], shared = [queue])]
-    fn led(mut cx: led::Context) {
-        cx.shared.queue.lock(|queue| {
-            if queue.push(Event::LED).is_err() {
-                wspr_log!("IRQ LED: failed to send LED event");
-            }
-        });
-
-        cx.local.tim3.clear_interrupt(timer::Event::Update);
-        cx.local.led.toggle();
     }
 
     #[task(binds = USART3, priority = 5, local = [circ, parser], shared = [status, queue])]

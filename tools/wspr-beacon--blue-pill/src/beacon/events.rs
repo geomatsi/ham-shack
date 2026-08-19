@@ -5,8 +5,6 @@ pub enum Event {
     /// Empty
     #[default]
     NIL,
-    /// LED data
-    LED,
     /// No GPS fix
     NOGPS,
     /// GPS data
@@ -21,7 +19,6 @@ impl Event {
     fn prio(self) -> u8 {
         match self {
             Event::NIL => 0u8,
-            Event::LED => 10u8,
             Event::NOGPS => 20u8,
             Event::GPS(_, _) => 20u8,
             Event::TXDONE => 30u8,
