@@ -4,7 +4,7 @@ use core::fmt;
 pub enum State {
     GpsWait,
     TxWait,
-    TxReady,
+    TxCalib,
     TxActive,
     Error(ErrorState),
 }
@@ -14,7 +14,7 @@ impl fmt::Display for State {
         match self {
             State::GpsWait => write!(f, "GPS Wait"),
             State::TxWait => write!(f, "TX Wait"),
-            State::TxReady => write!(f, "TX Ready"),
+            State::TxCalib => write!(f, "Calibration"),
             State::TxActive => write!(f, "Transmitting"),
             State::Error(code) => write!(f, "Err:{}", code), // Dynamically formats the number!
         }
@@ -26,7 +26,7 @@ impl State {
         match self {
             State::GpsWait => "GPS Wait",
             State::TxWait => "TX Wait",
-            State::TxReady => "TX Ready",
+            State::TxCalib => "Calibration",
             State::TxActive => "TX",
             State::Error(_) => "Error",
         }
@@ -35,6 +35,7 @@ impl State {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ErrorState {
+    CALIBQueueFailure,
     WSPRQueueFailure,
     PPSQueueFailure,
 }
@@ -42,6 +43,7 @@ pub enum ErrorState {
 impl ErrorState {
     pub fn as_str(&self) -> &'static str {
         match self {
+            ErrorState::CALIBQueueFailure => "CALIB queue",
             ErrorState::WSPRQueueFailure => "WSPR queue",
             ErrorState::PPSQueueFailure => "PPS queue",
         }
@@ -51,6 +53,7 @@ impl ErrorState {
 impl fmt::Display for ErrorState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match *self {
+            ErrorState::CALIBQueueFailure => "CALIB queue failure",
             ErrorState::WSPRQueueFailure => "WSPR queue failure",
             ErrorState::PPSQueueFailure => "PPS IRQ queue failure",
         };

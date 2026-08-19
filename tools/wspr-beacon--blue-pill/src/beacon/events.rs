@@ -11,8 +11,8 @@ pub enum Event {
     GPS((f64, f64), (u8, u8, f32)),
     /// Tx result
     TXDONE,
-    /// PPS data
-    PPS,
+    /// Calibration result
+    CALIB(i64),
 }
 
 impl Event {
@@ -21,8 +21,8 @@ impl Event {
             Event::NIL => 0u8,
             Event::NOGPS => 20u8,
             Event::GPS(_, _) => 20u8,
+            Event::CALIB(_) => 30u8,
             Event::TXDONE => 30u8,
-            Event::PPS => 50u8,
         }
     }
 }

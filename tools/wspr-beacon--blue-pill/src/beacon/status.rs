@@ -38,6 +38,7 @@ pub struct Status {
     pub qth: Option<[u8; 4]>,
     pub time: Option<Time>,
     pub msg: Option<[u8; WSPR_SYMBOLS]>,
+    pub ppb: Option<i64>,
 }
 
 impl Status {
@@ -48,6 +49,7 @@ impl Status {
             qth: None,
             time: None,
             msg: None,
+            ppb: None,
         }
     }
 
@@ -62,6 +64,7 @@ impl Status {
         self.state = State::GpsWait;
         self.qth = None;
         self.msg = None;
+        self.ppb = None;
     }
 
     /// Snapshot of just the fields a display cares about.
