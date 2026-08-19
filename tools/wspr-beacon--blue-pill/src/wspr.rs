@@ -108,8 +108,14 @@ mod app {
 
             display::create(
                 display::DisplayParts {
-                    gpioa,
-                    tim2: cx.device.TIM2,
+                    crl: gpioa.crl,
+                    pa0: gpioa.pa0,
+                    pa1: gpioa.pa1,
+                    pa2: gpioa.pa2,
+                    pa3: gpioa.pa3,
+                    pa4: gpioa.pa4,
+                    pa5: gpioa.pa5,
+                    tim: cx.device.TIM1,
                 },
                 &mut rcc,
             )

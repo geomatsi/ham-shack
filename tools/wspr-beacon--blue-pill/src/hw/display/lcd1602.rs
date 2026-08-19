@@ -20,8 +20,8 @@
 //! 0.2 pin and delay traits as well, so no compat shim is needed here (unlike
 //! `Eh1BitBangI2c`, which exists only because ssd1306 0.10 wants eh 1.0).
 //!
-//! TIM2 is the time source: the driver needs blocking waits at both µs and ms
-//! scale, and `Delay<TIM2, 1_000_000>` covers the whole range. The SSD1306
+//! TIM1 is the time source: the driver needs blocking waits at both µs and ms
+//! scale, and `Delay<TIM1, 1_000_000>` covers the whole range. The SSD1306
 //! backend spends the same timer on its bit-bang I2C clock instead — only one
 //! backend is built at a time, so they never contend.
 //!
@@ -50,9 +50,9 @@ type Pin<const N: u8> = gpio::Pin<'A', N, Output<PushPull>>;
 
 type Panel = HD44780<FourBitBus<Pin<0>, Pin<1>, Pin<2>, Pin<3>, Pin<4>, Pin<5>>>;
 
-/// Microsecond-resolution blocking delay off TIM2. The driver asks for both
+/// Microsecond-resolution blocking delay off TIM1. The driver asks for both
 /// `DelayUs<u16>` and `DelayMs<u8>`; a 1 MHz tick serves both.
-type Delay = timer::DelayUs<pac::TIM2>;
+type Delay = timer::DelayUs<pac::TIM1>;
 
 pub struct Display {
     panel: Panel,
@@ -63,17 +63,25 @@ pub struct Display {
 
 pub fn create(p: DisplayParts, rcc: &mut Rcc) -> Option<Display> {
     let DisplayParts {
-        mut gpioa, tim2, ..
+        mut crl,
+        pa0,
+        pa1,
+        pa2,
+        pa3,
+        pa4,
+        pa5,
+        tim,
+        ..
     } = p;
 
-    let mut delay = tim2.delay_us(rcc);
+    let mut delay = tim.delay_us(rcc);
 
-    let rs = gpioa.pa0.into_push_pull_output(&mut gpioa.crl);
-    let en = gpioa.pa1.into_push_pull_output(&mut gpioa.crl);
-    let d4 = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
-    let d5 = gpioa.pa3.into_push_pull_output(&mut gpioa.crl);
-    let d6 = gpioa.pa4.into_push_pull_output(&mut gpioa.crl);
-    let d7 = gpioa.pa5.into_push_pull_output(&mut gpioa.crl);
+    let rs = pa0.into_push_pull_output(&mut crl);
+    let en = pa1.into_push_pull_output(&mut crl);
+    let d4 = pa2.into_push_pull_output(&mut crl);
+    let d5 = pa3.into_push_pull_output(&mut crl);
+    let d6 = pa4.into_push_pull_output(&mut crl);
+    let d7 = pa5.into_push_pull_output(&mut crl);
 
     // A missing or wedged panel must not take the beacon down at boot. The
     // driver runs the 4-bit init sequence here, including the power-on wait.

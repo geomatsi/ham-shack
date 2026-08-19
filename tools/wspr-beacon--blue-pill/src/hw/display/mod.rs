@@ -36,31 +36,42 @@ pub trait StatusDisplay {
 /// parallel and headless backends. Each backend consumes the subset it needs
 /// and drops the rest.
 ///
-/// GPIOA is passed as a whole split port because pin mode changes need
-/// `&mut Parts::crl/crh`, and those tokens cannot be shared with `init()`.
-/// Handing over the entire port works here because nothing else on this board
-/// uses GPIOA: LED is PC13, PPS is PB1, GPS is PB10/PB11. A backend needing a
-/// pin outside GPIOA is the signal to move the whole pin map into one
-/// cfg-aware board module rather than to grow this struct.
+/// Only PA0-PA5 are handed over — what the widest backend actually wires up
+/// (LCD1602 in 4-bit mode) — plus the `crl` token that configures them. Pin
+/// mode changes need `&mut Cr`, and that token cannot be shared, so it moves
+/// here whole; that is also why the pins come one by one rather than as a split
+/// `Parts`. PA6-PA7 are free and PA8-PA15 stay with `init()`, which needs PA15
+/// to hand to `disable_jtag()` — that is what frees PB3 for the calibration
+/// input. Nothing else on this board uses PA0-PA5: LED is PC13, PPS is PB1,
+/// GPS is PB10/PB11. A backend wanting more pins takes PA6/PA7 by adding them
+/// back here; one needing a pin outside CRL is the signal to move the whole pin
+/// map into one cfg-aware board module rather than to grow this struct.
 ///
-/// TIM2 covers whichever time source a backend needs — a bit-bang bus clock
+/// TIM1 covers whichever time source a backend needs — a bit-bang bus clock
 /// (`counter_hz`) or blocking waits (`delay_us`), never both at once so far.
 /// SysTick is deliberately *not* in here: it stays free for the alternative
 /// `cortex-m-systick` monotonic. A backend that genuinely needs two independent
 /// time sources — an I2C-backpack LCD, say, which wants a bit-bang clock *and*
 /// HD44780 timing — is the point at which to add SYST or another timer.
 ///
-/// No bus peripheral and no AFIO either. GPIOA has pins to spare for bit-banging
-/// any reasonable panel, so SPI1/SPI2 stay reserved as RTIC async dispatchers
-/// (see the `#[rtic::app]` attribute), and nothing here needs pin remapping.
+/// No bus peripheral and no AFIO either. GPIOA's low half has pins to spare for
+/// bit-banging any reasonable panel, so SPI1/SPI2 stay reserved as RTIC async
+/// dispatchers (see the `#[rtic::app]` attribute), and nothing here needs pin
+/// remapping.
 /// AFIO would also be the one field that has to be borrowed rather than owned —
 /// it is shared with the PPS EXTI setup and the USART3 remap — which would force
 /// a lifetime parameter onto this struct. Add what a real backend actually asks
 /// for, when it asks: backends destructure with `..`, so a new field costs
 /// nothing to the ones that ignore it.
 pub struct DisplayParts {
-    pub gpioa: gpio::gpioa::Parts,
-    pub tim2: pac::TIM2,
+    pub crl: gpio::Cr<'A', false>,
+    pub pa0: gpio::gpioa::PA0,
+    pub pa1: gpio::gpioa::PA1,
+    pub pa2: gpio::gpioa::PA2,
+    pub pa3: gpio::gpioa::PA3,
+    pub pa4: gpio::gpioa::PA4,
+    pub pa5: gpio::gpioa::PA5,
+    pub tim: pac::TIM1,
 }
 
 #[cfg(any(

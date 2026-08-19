@@ -1,6 +1,6 @@
 //! SSD1306 128x64 OLED backend.
 //!
-//! Wiring: bit-banged I2C on PA0 (SCL) / PA1 (SDA), TIM2 as the bus clock
+//! Wiring: bit-banged I2C on PA0 (SCL) / PA1 (SDA), TIM1 as the bus clock
 //! source. `Eh1BitBangI2c` bridges bitbang-hal 0.3 (embedded-hal 0.2) up to the
 //! embedded-hal 1.0 bus the `ssd1306` driver expects.
 //!
@@ -38,7 +38,7 @@ type Bus = Eh1BitBangI2c<
     I2cBB<
         gpio::gpioa::PA0<Output<OpenDrain>>,
         gpio::gpioa::PA1<Output<OpenDrain>>,
-        CounterHz<pac::TIM2>,
+        CounterHz<pac::TIM1>,
     >,
 >;
 
@@ -50,13 +50,17 @@ pub struct Display {
 
 pub fn create(p: DisplayParts, rcc: &mut Rcc) -> Option<Display> {
     let DisplayParts {
-        mut gpioa, tim2, ..
+        mut crl,
+        pa0,
+        pa1,
+        tim,
+        ..
     } = p;
 
-    let scl = gpioa.pa0.into_open_drain_output(&mut gpioa.crl);
-    let sda = gpioa.pa1.into_open_drain_output(&mut gpioa.crl);
+    let scl = pa0.into_open_drain_output(&mut crl);
+    let sda = pa1.into_open_drain_output(&mut crl);
 
-    let mut clk = tim2.counter_hz(rcc);
+    let mut clk = tim.counter_hz(rcc);
     clk.start(I2C_HZ.Hz()).ok()?;
 
     let bus = Eh1BitBangI2c::new(I2cBB::new(scl, sda, clk));
