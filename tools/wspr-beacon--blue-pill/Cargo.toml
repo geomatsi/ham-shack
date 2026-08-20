@@ -101,3 +101,8 @@ path = "examples/gps-test3.rs"
 [[example]]
 name = "gps-test4"
 path = "examples/gps-test4.rs"
+
+
+[[example]]
+name = "rtic-test1"
+path = "examples/rtic-test1.rs"
