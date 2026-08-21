@@ -56,7 +56,7 @@ mod app {
     const CLK1_FREQ: u32 = 10_000_000;
     const NOMINAL: Frequency = Frequency::from_hz(CLK1_FREQ);
 
-    stm32_tim4_monotonic!(Mono, 100_000);
+    stm32_tim4_monotonic!(Mono, 10_000);
 
     #[shared]
     struct Shared {
