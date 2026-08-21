@@ -204,6 +204,11 @@ mod app {
 
         Mono::start(rcc.clocks.pclk1_tim().to_Hz());
 
+        // hack to avoid masking Mono timer during gating busyloops in calibration task
+        unsafe {
+            cx.core.NVIC.set_priority(pac::Interrupt::TIM4, 0x20);
+        }
+
         display_task::spawn().unwrap();
 
         (
@@ -645,7 +650,7 @@ mod app {
         });
     }
 
-    #[task(binds = EXTI1, priority = 10, local = [pps])]
+    #[task(binds = EXTI1, priority = 15, local = [pps])]
     fn pps(cx: pps::Context) {
         if cx.local.pps.check_interrupt() {
             PPS_GATE.store(false, Ordering::Release);
