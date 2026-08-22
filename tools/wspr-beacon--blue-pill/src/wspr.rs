@@ -11,6 +11,7 @@ use panic_halt as _;
 mod app {
     use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
     use stm32f1xx_hal::i2c::BlockingI2c;
+    use wspr_beacon::beacon::calibration::{Calibration, Reading, Step};
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
     use wspr_beacon::beacon::states::{ErrorState, State};
@@ -246,13 +247,9 @@ mod app {
 
     #[idle(shared = [status, queue, xmit])]
     fn idle(mut cx: idle::Context) -> ! {
+        let mut calib: Option<Calibration> = None;
         const NOGPS_LOG_PERIOD: u16 = 20;
         let mut nogps_log_tick: u16 = 0;
-
-        let mut freq = NOMINAL;
-        let mut calib_step: u8 = 0;
-        let mut skip_next: bool = false;
-        let mut ppb: i64 = 0;
 
         loop {
             // Drain every queued event before sleeping. Popping a single event
@@ -383,8 +380,8 @@ mod app {
                             if time.2 as u8 == 10u8 {
                                 wspr_log!("SCHED: started calibration");
                                 CALIB_PPS_EVT_GATE.store(true, Ordering::Release);
+                                calib = Some(Calibration::new(NOMINAL));
                                 status.state = State::TxCalib;
-                                calib_step = 0;
                             }
                             // 1 sec before WSPR slot: spawn WSPR task and move to TxActive state
                             // TODO: write proper time condition for 1 sec before WSPR slot
@@ -409,100 +406,71 @@ mod app {
                     },
                     State::TxCalib => {
                         if let Event::CALIB(ticks) = event {
-                            match calib_step {
-                                // initial state: start calibration
-                                0 => {
-                                    freq = NOMINAL;
-                                    cx.shared.xmit.lock(|xmit| {
-                                        xmit.set_clock_frequency_fixed_pll(ClockOutput::Clk1, freq)
-                                            .unwrap();
-                                    });
-                                    calib_step += 1;
-                                }
-                                // warmup and stabilize
-                                1..=2 => {
-                                    ppb = calibrate::error_ppb(ticks, NOMINAL, 1);
-                                    wspr_log!("SCHED: calibraton warmup: {} ticks {} ppb", ticks, ppb);
-                                    calib_step += 1;
-                                }
-                                // calibrate
-                                3..=8 => 'calibrate: {
-                                    if skip_next {
-                                        // the freq changed during or near this gate
-                                        // skip one step to stabilize and avoid mixed frequency during calib interval
-                                        skip_next = false;
-                                        calib_step += 1;
-                                        break 'calibrate;
+                            if let Some(c) = calib.as_mut() {
+                                let step = c.gate(ticks);
+
+                                match c.last_reading() {
+                                    Reading::Ppb(ppb) => {
+                                        wspr_log!(
+                                            "SCHED: calibraton: {} ticks ({:+} vs nominal) ppb {}",
+                                            ticks,
+                                            ticks as i64 - CLK1_FREQ as i64,
+                                            ppb
+                                        );
                                     }
-
-                                    ppb = calibrate::error_ppb(ticks, NOMINAL, 1);
-                                    wspr_log!(
-                                        "SCHED: calibraton: {} ticks ({:+} vs nominal) ppb {}",
-                                        ticks,
-                                        ticks as i64 - CLK1_FREQ as i64,
-                                        ppb
-                                    );
-
-                                    if !calibrate::plausible(ppb) {
+                                    Reading::Rejected(ppb) => {
                                         wspr_log!(
                                             "SCHED: calibration: |pbb| {} is too large to be true, gate rejected",
                                             ppb.abs()
                                         );
-                                        calib_step += 1;
-                                        break 'calibrate;
                                     }
+                                    Reading::Skipped => {}
+                                }
 
-                                    // TODO: more elaborated logic can be implemented, e.g. stop calibration early or averaging
-                                    if ppb.abs() > 300 {
-                                        freq = calibrate::correct(freq, ppb);
-                                        skip_next = true;
-
+                                match step {
+                                    Step::Continue => {}
+                                    Step::SetDial(dial) => {
                                         wspr_log!(
-                                            "SCHED: calibration: apply {} ppb correction to freq {} uHz",
-                                            ppb,
-                                            freq.as_microhz()
+                                            "SCHED: calibration: set dial freq {} uHz",
+                                            dial.as_microhz()
                                         );
-
                                         cx.shared.xmit.lock(|xmit| {
-                                            xmit.set_clock_frequency_fixed_pll(
-                                                ClockOutput::Clk1,
-                                                freq,
-                                            )
-                                            .unwrap();
+                                            xmit.set_clock_frequency_fixed_pll(ClockOutput::Clk1, dial)
+                                                .unwrap();
                                         });
                                     }
+                                    Step::Stop(result) => {
+                                        cx.shared.xmit.lock(|xmit| {
+                                            xmit.set_clock_enabled(ClockOutput::Clk1, false);
+                                            xmit.flush_output_enabled().unwrap();
+                                        });
 
-                                    calib_step += 1;
-                                }
-                                // complete calibration
-                                9 => {
-                                    // What the dial ended up carrying, which is the whole error:
-                                    // each reading above saw only what was left of it
-                                    ppb = calibrate::correction_ppb(freq, NOMINAL);
+                                        match result {
+                                            Some(ppb) => {
+                                                wspr_log!("CALIB: completed calibration with {} ppb", ppb)
+                                            }
+                                            None => {
+                                                wspr_log!("CALIB: calibration failed: no usable gate")
+                                            }
+                                        }
 
-                                    cx.shared.xmit.lock(|xmit| {
-                                        xmit.set_clock_enabled(ClockOutput::Clk1, false);
-                                        xmit.flush_output_enabled().unwrap();
-                                    });
-
-                                    wspr_log!("CALIB: completed calibration with {} ppb", ppb);
-                                    CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
-                                    status.state = State::TxWait;
-                                    status.ppb = Some(ppb);
+                                        CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
+                                        status.state = State::TxWait;
+                                        status.ppb = result;
+                                        calib = None;
+                                    }
                                 }
-                                // unexpected: stop clk and reset calibration status
-                                10.. => {
-                                    wspr_log!(
-                                        "CALIB: unexpected state, stop and reset calibration"
-                                    );
-                                    cx.shared.xmit.lock(|xmit| {
-                                        xmit.set_clock_enabled(ClockOutput::Clk1, false);
-                                        xmit.flush_output_enabled().unwrap();
-                                    });
-                                    CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
-                                    status.state = State::TxWait;
-                                    status.ppb = None;
-                                }
+                            } else {
+                                // No calibration in flight: nothing sane to do with the tick.
+                                // Stop the clock and start over.
+                                wspr_log!("CALIB: unexpected state, stop and reset calibration");
+                                cx.shared.xmit.lock(|xmit| {
+                                    xmit.set_clock_enabled(ClockOutput::Clk1, false);
+                                    xmit.flush_output_enabled().unwrap();
+                                });
+                                CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
+                                status.state = State::TxWait;
+                                status.ppb = None;
                             }
                         }
                     }

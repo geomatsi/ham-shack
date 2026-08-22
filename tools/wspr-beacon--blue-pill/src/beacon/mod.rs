@@ -1,3 +1,4 @@
+pub mod calibration;
 pub mod events;
 pub mod logging;
 pub mod qth;
