@@ -218,11 +218,6 @@ mod app {
 
         Mono::start(rcc.clocks.pclk1_tim().to_Hz());
 
-        // hack to avoid masking Mono timer during gating busyloops in calibration task
-        unsafe {
-            cx.core.NVIC.set_priority(pac::Interrupt::TIM4, 0x20);
-        }
-
         display_task::spawn().unwrap();
 
         (
