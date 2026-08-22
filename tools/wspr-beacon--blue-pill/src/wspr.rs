@@ -261,6 +261,7 @@ mod app {
             loop {
                 let mut event: Option<Event> = None;
                 cx.shared.queue.lock(|queue| {
+                    compiler_fence(Ordering::SeqCst);
                     event = queue.pop();
                 });
 
@@ -534,7 +535,10 @@ mod app {
             // window between this check and the WFI is therefore drained within
             // that, still inside the 1 Hz GPS/PPS cadence, so no event is stranded
             // in practice.
-            let empty = cx.shared.queue.lock(|queue| queue.is_empty());
+            let empty = cx.shared.queue.lock(|queue| {
+                compiler_fence(Ordering::SeqCst);
+                queue.is_empty()
+            });
             if empty {
                 // Keep the core awake so host-side RTT attach does not time out.
                 #[cfg(feature = "rtt-log")]
