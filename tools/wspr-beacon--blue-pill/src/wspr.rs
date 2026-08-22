@@ -9,7 +9,7 @@ use panic_halt as _;
 
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1, SPI2])]
 mod app {
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
     use stm32f1xx_hal::i2c::BlockingI2c;
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
@@ -47,7 +47,8 @@ mod app {
     #[cfg(feature = "rtt-log")]
     use rtt_target::{rprintln, rtt_init_print};
 
-    static PPS_GATE: AtomicBool = AtomicBool::new(false);
+    static PPS_WSPR_XMIT_GATE: AtomicBool = AtomicBool::new(false);
+    static CALIB_PPS_EVT_GATE: AtomicBool = AtomicBool::new(false);
 
     const SYSCLK_MHZ: u32 = 32;
     const UBLOX_LEN: usize = 2048;
@@ -77,7 +78,7 @@ mod app {
         // Display task
         display: Option<display::Display>,
 
-        // Calibration task
+        // PPS task
         tim2: pac::TIM2,
         tim3: pac::TIM3,
     }
@@ -141,8 +142,21 @@ mod app {
         afio.mapr
             .modify_mapr(|_, w| unsafe { w.tim2_remap().bits(0b01) });
         let _clk = pb3.into_floating_input(&mut gpiob.crl);
-        let tim3 = Timer::new(cx.device.TIM3, &mut rcc).release();
         let tim2 = Timer::new(cx.device.TIM2, &mut rcc).release();
+        let tim3 = Timer::new(cx.device.TIM3, &mut rcc).release();
+
+        tim3.arr().write(|w| w.arr().set(u16::MAX));
+        tim3.smcr().write(|w| w.ts().itr1().sms().ext_clock_mode());
+        tim3.cr1().write(|w| w.cen().set_bit());
+
+        tim2.arr().write(|w| w.arr().set(u16::MAX));
+        tim2.ccmr1_input()
+            .write(|w| w.cc2s().ti2().ic2f().no_filter());
+        tim2.ccer().write(|w| w.cc2p().clear_bit());
+        tim2.smcr()
+            .write(|w| w.sms().ext_clock_mode().ts().ti2fp2());
+        tim2.cr2().write(|w| w.mms().update());
+        tim2.cr1().write(|w| w.urs().set_bit());
 
         //// Display
         #[cfg(not(feature = "display"))]
@@ -228,17 +242,22 @@ mod app {
                 // Display task
                 display,
 
-                // Calibration task
+                // PPS task
                 tim2,
                 tim3,
             },
         )
     }
 
-    #[idle(shared = [status, queue])]
+    #[idle(shared = [status, queue, xmit])]
     fn idle(mut cx: idle::Context) -> ! {
         const NOGPS_LOG_PERIOD: u16 = 20;
         let mut nogps_log_tick: u16 = 0;
+
+        let mut freq = NOMINAL;
+        let mut calib_step: u8 = 0;
+        let mut skip_next: bool = false;
+        let mut ppb: i64 = 0;
 
         loop {
             // Drain every queued event before sleeping. Popping a single event
@@ -362,20 +381,14 @@ mod app {
                     },
                     State::TxWait => match event {
                         Event::GPS(_, time) => {
-                            wspr_log!("Event GPS: Time ({}:{}:{})", time.0, time.1, time.2 as u8);
+                            wspr_log!("SCHED: TxWait: GPS: Time ({}:{}:{})", time.0, time.1, time.2 as u8);
                             // 30 sec before WSPR slot: start calibraton task to tune si5351
                             // TODO: write proper time condition for 1 min before WSPR slot
-                            if time.2 as u8 == 30u8 {
-                                match calib::spawn() {
-                                    Ok(_) => {
-                                        wspr_log!("SCHED: spawned CALIB");
-                                        status.state = State::TxCalib;
-                                    }
-                                    Err(_) => {
-                                        wspr_log!("SCHED: failed to spawn WSPR");
-                                        // TODO: ignore and wait for the next slot or reset state ?
-                                    }
-                                }
+                            if time.2 as u8 == 10u8 {
+                                wspr_log!("SCHED: started calibration");
+                                CALIB_PPS_EVT_GATE.store(true, Ordering::Release);
+                                status.state = State::TxCalib;
+                                calib_step = 0;
                             }
                             // 1 sec before WSPR slot: spawn WSPR task and move to TxActive state
                             // TODO: write proper time condition for 1 sec before WSPR slot
@@ -399,10 +412,102 @@ mod app {
                         _ => {}
                     },
                     State::TxCalib => {
-                        if let Event::CALIB(ppb) = event {
-                            wspr_log!("Calibration: {} ppb", ppb);
-                            status.ppb = Some(ppb);
-                            status.state = State::TxWait;
+                        if let Event::CALIB(ticks) = event {
+                            match calib_step {
+                                // initial state: start calibration
+                                0 => {
+                                    freq = NOMINAL;
+                                    cx.shared.xmit.lock(|xmit| {
+                                        xmit.set_clock_frequency_fixed_pll(ClockOutput::Clk1, freq)
+                                            .unwrap();
+                                    });
+                                    calib_step += 1;
+                                }
+                                // warmup and stabilize
+                                1..=2 => {
+                                    ppb = calibrate::error_ppb(ticks, NOMINAL, 1);
+                                    wspr_log!("SCHED: calibraton warmup: {} ticks {} ppb", ticks, ppb);
+                                    calib_step += 1;
+                                }
+                                // calibrate
+                                3..=8 => 'calibrate: {
+                                    if skip_next {
+                                        // the freq changed during or near this gate
+                                        // skip one step to stabilize and avoid mixed frequency during calib interval
+                                        skip_next = false;
+                                        calib_step += 1;
+                                        break 'calibrate;
+                                    }
+
+                                    ppb = calibrate::error_ppb(ticks, NOMINAL, 1);
+                                    wspr_log!(
+                                        "SCHED: calibraton: {} ticks ({:+} vs nominal) ppb {}",
+                                        ticks,
+                                        ticks as i64 - CLK1_FREQ as i64,
+                                        ppb
+                                    );
+
+                                    if !calibrate::plausible(ppb) {
+                                        wspr_log!(
+                                            "SCHED: calibration: |pbb| {} is too large to be true, gate rejected",
+                                            ppb.abs()
+                                        );
+                                        calib_step += 1;
+                                        break 'calibrate;
+                                    }
+
+                                    // TODO: more elaborated logic can be implemented, e.g. stop calibration early or averaging
+                                    if ppb.abs() > 300 {
+                                        freq = calibrate::correct(freq, ppb);
+                                        skip_next = true;
+
+                                        wspr_log!(
+                                            "SCHED: calibration: apply {} ppb correction to freq {} uHz",
+                                            ppb,
+                                            freq.as_microhz()
+                                        );
+
+                                        cx.shared.xmit.lock(|xmit| {
+                                            xmit.set_clock_frequency_fixed_pll(
+                                                ClockOutput::Clk1,
+                                                freq,
+                                            )
+                                            .unwrap();
+                                        });
+                                    }
+
+                                    calib_step += 1;
+                                }
+                                // complete calibration
+                                9 => {
+                                    // What the dial ended up carrying, which is the whole error:
+                                    // each reading above saw only what was left of it
+                                    ppb = calibrate::correction_ppb(freq, NOMINAL);
+
+                                    cx.shared.xmit.lock(|xmit| {
+                                        xmit.set_clock_enabled(ClockOutput::Clk1, false);
+                                        xmit.flush_output_enabled().unwrap();
+                                    });
+
+                                    wspr_log!("CALIB: completed calibration with {} ppb", ppb);
+                                    CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
+                                    status.state = State::TxWait;
+                                    status.ppb = Some(ppb);
+                                }
+                                // unexpected: stop clk and reset calibration status
+                                10.. => {
+                                    wspr_log!(
+                                        "CALIB: unexpected state, stop and reset calibration"
+                                    );
+                                    cx.shared.xmit.lock(|xmit| {
+                                        xmit.set_clock_enabled(ClockOutput::Clk1, false);
+                                        xmit.flush_output_enabled().unwrap();
+                                    });
+                                    CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
+                                    status.state = State::TxWait;
+                                    status.ppb = None;
+                                }
+                            }
                         }
                     }
                     State::TxActive => {
@@ -446,135 +551,14 @@ mod app {
         }
     }
 
-    #[task(priority = 10, local = [tim2, tim3], shared = [queue, status, xmit])]
-    async fn calib(mut cx: calib::Context) {
-        let lo = cx.local.tim2;
-        let hi = cx.local.tim3;
-        let mut freq = NOMINAL;
-        let mut ppb;
-
-        wspr_log!("CALIBRATION started");
-
-        cx.shared.xmit.lock(|xmit| {
-            xmit.set_clock_frequency_fixed_pll(ClockOutput::Clk1, freq)
-                .unwrap();
-        });
-
-        let setup = || {
-            hi.arr().write(|w| w.arr().set(u16::MAX));
-            hi.smcr().write(|w| w.ts().itr1().sms().ext_clock_mode());
-            hi.cr1().write(|w| w.cen().set_bit());
-
-            lo.arr().write(|w| w.arr().set(u16::MAX));
-            lo.ccmr1_input()
-                .write(|w| w.cc2s().ti2().ic2f().no_filter());
-            lo.ccer().write(|w| w.cc2p().clear_bit());
-            lo.smcr().write(|w| w.sms().ext_clock_mode().ts().ti2fp2());
-            lo.cr2().write(|w| w.mms().update());
-            lo.cr1().write(|w| w.urs().set_bit());
-        };
-
-        let enable = || lo.cr1().write(|w| w.urs().set_bit().cen().set_bit());
-        let disable = || lo.cr1().write(|w| w.urs().set_bit().cen().clear_bit());
-
-        let read = || {
-            let low = lo.cnt().read().cnt().bits() as u32;
-            let high = hi.cnt().read().cnt().bits() as u32;
-            (high << 16) | low
-        };
-
-        let clear = || {
-            lo.cnt().write(|w| w.cnt().set(0));
-            hi.cnt().write(|w| w.cnt().set(0));
-        };
-
-        // get ready: setup and clear
-        setup();
-        clear();
-
-        // wait for the 1st pps
-        PPS_GATE.store(true, Ordering::Relaxed);
-        while PPS_GATE.load(Ordering::Acquire) {
-            Mono::delay(10u64.millis()).await;
-        }
-
-        wspr_log!("Start calibration measurements");
-
-        for _ in 0..5 {
-            // open the gate on a second boundary
-            PPS_GATE.store(true, Ordering::Relaxed);
-            while PPS_GATE.load(Ordering::Acquire) {
-                cortex_m::asm::nop();
-            }
-
-            enable();
-
-            // close it on the next one
-            PPS_GATE.store(true, Ordering::Relaxed);
-            while PPS_GATE.load(Ordering::Acquire) {
-                cortex_m::asm::nop();
-            }
-
-            disable();
-            let ticks = read();
-            clear();
-
-            ppb = calibrate::error_ppb(ticks, NOMINAL, 1);
-            wspr_log!(
-                "gate: {} ticks ({:+} vs nominal) ppb {}",
-                ticks,
-                ticks as i64 - CLK1_FREQ as i64,
-                ppb
-            );
-
-            if !calibrate::plausible(ppb) {
-                wspr_log!("|pbb| {} is too large to be true, gate rejected", ppb.abs());
-                continue;
-            }
-
-            if ppb.abs() > 300 {
-                freq = calibrate::correct(freq, ppb);
-                wspr_log!(
-                    "apply {} ppb correction to freq {} uHz",
-                    ppb,
-                    freq.as_microhz()
-                );
-
-                cx.shared.xmit.lock(|xmit| {
-                    xmit.set_clock_frequency_fixed_pll(ClockOutput::Clk1, freq)
-                        .unwrap();
-                });
-            }
-        }
-
-        cx.shared.xmit.lock(|xmit| {
-            xmit.set_clock_enabled(ClockOutput::Clk1, false);
-            xmit.flush_output_enabled().unwrap();
-        });
-
-        // What the dial ended up carrying, which is the whole error:
-        // each reading above saw only what was left of it
-        ppb = calibrate::correction_ppb(freq, NOMINAL);
-
-        cx.shared.queue.lock(|queue| {
-            if queue.push(Event::CALIB(ppb)).is_err() {
-                wspr_log!("Calibration: failed to send PPB event");
-                // emergency exit from TxWait state
-                cx.shared.status.lock(|status| {
-                    status.state = State::Error(ErrorState::CALIBQueueFailure);
-                });
-            }
-        });
-    }
-
     #[task(priority = 10, shared = [queue, status, xmit])]
     async fn wspr(mut cx: wspr::Context, x: i32) {
         wspr_log!("WSPR started: {}", x);
 
         // spawned after 59th second, so gate on the next PPS
         // TODO: handle lost GPS and missing PPS using Mono (?)
-        PPS_GATE.store(true, Ordering::Relaxed);
-        while PPS_GATE.load(Ordering::Acquire) {
+        PPS_WSPR_XMIT_GATE.store(true, Ordering::Relaxed);
+        while PPS_WSPR_XMIT_GATE.load(Ordering::Acquire) {
             Mono::delay(1u64.millis()).await;
         }
 
@@ -650,11 +634,52 @@ mod app {
         });
     }
 
-    #[task(binds = EXTI1, priority = 15, local = [pps])]
-    fn pps(cx: pps::Context) {
+    #[task(binds = EXTI1, priority = 15, local = [pps, tim2, tim3], shared = [status, queue])]
+    fn pps(mut cx: pps::Context) {
+        let lo = cx.local.tim2;
+        let hi = cx.local.tim3;
+
+        let enable = || lo.cr1().write(|w| w.urs().set_bit().cen().set_bit());
+        let disable = || lo.cr1().write(|w| w.urs().set_bit().cen().clear_bit());
+        let is_running = || lo.cr1().read().cen().is_enabled();
+
+        let read = || {
+            let low = lo.cnt().read().cnt().bits() as u32;
+            let high = hi.cnt().read().cnt().bits() as u32;
+            (high << 16) | low
+        };
+
+        let clear = || {
+            lo.cnt().write(|w| w.cnt().set(0));
+            hi.cnt().write(|w| w.cnt().set(0));
+        };
+
         if cx.local.pps.check_interrupt() {
-            PPS_GATE.store(false, Ordering::Release);
+            PPS_WSPR_XMIT_GATE.store(false, Ordering::Release);
             cx.local.pps.clear_interrupt_pending_bit();
+
+            // mini FSM for reading calibration measurements every other second
+            if is_running() {
+                disable();
+                let ticks = read();
+                clear();
+
+                // use atomic gate instead of checking state to avoid state lock
+                if CALIB_PPS_EVT_GATE.load(Ordering::Acquire) {
+                    cx.shared.queue.lock(|queue| {
+                        // queue lock is less invasive
+                        if queue.push(Event::CALIB(ticks)).is_err() {
+                            wspr_log!("PPS: failed to send Calibration event");
+                            // emergency exit from TxCalib state
+                            cx.shared.status.lock(|status| {
+                                status.state = State::Error(ErrorState::CALIBQueueFailure);
+                            });
+                        }
+                    });
+                }
+            } else {
+                enable();
+            }
 
             #[cfg(feature = "dwt-profile")]
             wspr_log!(
