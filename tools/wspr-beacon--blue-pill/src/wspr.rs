@@ -391,19 +391,26 @@ mod app {
                         _ => {}
                     },
                     State::TxWait => match event {
-                        Event::GPS(_, time) => {
-                            wspr_log!("SCHED: TxWait: GPS: Time ({}:{}:{})", time.0, time.1, time.2 as u8);
-                            // 30 sec before WSPR slot: start calibraton task to tune si5351
-                            // TODO: write proper time condition for 1 min before WSPR slot
-                            if time.2 as u8 == 10u8 {
+                        Event::GPS(_, (_, min, sec)) => {
+                            let sec = sec as u8;
+                            wspr_log!("SCHED: TxWait: GPS: Time ({}:{})", min, sec);
+
+                            // Calibrate at :10 of every calib_period_min-th minute.
+                            if sec == 10u8 && min.is_multiple_of(CFG.ham.calib_period_min) {
                                 wspr_log!("SCHED: started calibration");
                                 CALIB_PPS_EVT_GATE.store(true, Ordering::Release);
                                 calib = Some(Calibration::new(CFG.hw.rf.nominal));
                                 status.state = State::TxCalib;
                             }
-                            // 1 sec before WSPR slot: spawn WSPR task and move to TxActive state
-                            // TODO: write proper time condition for 1 sec before WSPR slot
-                            if time.2 as u8 == 59u8 && status.ppb.is_some() {
+
+                            // Spawn at :00 so the next PPS edge is the :01 a
+                            // frame starts on - the task needs to know nothing
+                            // more. tx_period_min is even, which is what keeps
+                            // frames on the even minutes receivers listen on.
+                            if sec == 0u8
+                                && min.is_multiple_of(CFG.ham.tx_period_min)
+                                && status.ppb.is_some()
+                            {
                                 match wspr::spawn(42) {
                                     Ok(_) => {
                                         wspr_log!("SCHED: spawned WSPR");
@@ -557,7 +564,7 @@ mod app {
     async fn wspr(mut cx: wspr::Context, x: i32) {
         wspr_log!("WSPR started: {}", x);
 
-        // spawned after 59th second, so gate on the next PPS
+        // spawned at :00, so the next PPS edge is the :01 a frame starts on
         // TODO: handle lost GPS and missing PPS using Mono (?)
         PPS_WSPR_XMIT_GATE.store(true, Ordering::Relaxed);
         while PPS_WSPR_XMIT_GATE.load(Ordering::Acquire) {

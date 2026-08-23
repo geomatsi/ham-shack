@@ -24,6 +24,8 @@ pub const CFG: Config = Config {
         bands: BANDS,
         band: 3, // 20m
         pwr: 27,
+        calib_period_min: 1,
+        tx_period_min: 10,
     },
     sw: Sw {
         disp: Disp { poll_ms: 250 },
@@ -77,6 +79,25 @@ const _: () = assert!(
     "hw.rf.pll_parked does not serve every band in ham.bands"
 );
 
+// WSPR frames start on even UTC minutes; dividing 60 keeps the cadence
+// unbroken across the hour.
+const _: () = assert!(
+    CFG.ham.tx_period_min.is_multiple_of(2) && 60u8.is_multiple_of(CFG.ham.tx_period_min),
+    "ham.tx_period_min must be even and divide 60"
+);
+
+// A frame is 110.6 s, so ten minutes is ~18% duty - about WSJT-X's default Tx
+// fraction of 20%.
+const _: () = assert!(
+    CFG.ham.tx_period_min >= 10,
+    "ham.tx_period_min below 10 is an impolite duty cycle"
+);
+
+const _: () = assert!(
+    60u8.is_multiple_of(CFG.ham.calib_period_min),
+    "ham.calib_period_min must be non-zero and divide 60"
+);
+
 // IWDG ceiling: /256 prescaler, 12-bit reload, 40 kHz nominal LSI (RM0008
 // Table 96). stm32f1xx-hal panics inside `start()` above this, and since the
 // period is a constant that folds to an unconditional panic at boot - leaving
@@ -121,6 +142,12 @@ pub struct Ham {
     /// beacon rotates.
     pub band: usize,
     pub pwr: u8,
+    /// Minutes between calibration runs. A run starts at :10 and takes ~20 s.
+    pub calib_period_min: u8,
+    /// Minutes between transmissions. Even, so frames land on the even UTC
+    /// minutes receivers listen on; the lower bound is duty cycle, not the
+    /// protocol.
+    pub tx_period_min: u8,
 }
 
 /// One WSPR band, named by the USB dial frequency its sub-band is referenced
