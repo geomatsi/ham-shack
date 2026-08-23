@@ -541,8 +541,7 @@ mod app {
             // tone spacing of exactly 12000/8192 Hz (1.46484375 Hz).
             const WSPR_SYMBOL_SAMPLES: u64 = 8192;
             const WSPR_SAMPLE_RATE_HZ: u64 = 12000;
-            // WSPR dial frequency for 20m band
-            let dial: Frequency = CFG.ham.wspr_dial;
+            let dial: Frequency = CFG.ham.bands[CFG.ham.band].dial;
             // WSPR audio offset is 1.5KHz above the dial frequency
             let offset = Frequency::from_hz(1_500);
 

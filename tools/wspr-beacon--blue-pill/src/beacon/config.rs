@@ -2,12 +2,28 @@
 
 use si5351::{ClockOutput, DriveStrength, Frequency, PLL};
 
+/// Bands this beacon is built for, by USB dial frequency, ascending.
+///
+/// These are the standard WSPR dial frequencies; worth a sanity check against
+/// your own reference before the first transmission on a band.
+pub const BANDS: [Band; 8] = [
+    Band::new(3_568_600),  // 80m
+    Band::new(7_038_600),  // 40m
+    Band::new(10_138_700), // 30m  WARC
+    Band::new(14_095_600), // 20m
+    Band::new(18_104_600), // 17m  WARC
+    Band::new(21_094_600), // 15m
+    Band::new(24_924_600), // 12m  WARC
+    Band::new(28_124_600), // 10m
+];
+
 /// The build-time configuration of this beacon.
 pub const CFG: Config = Config {
     ham: Ham {
         callsign: "R1BRL",
-        wspr_dial: Frequency::from_hz(14_095_600),
-        pwr: 37,
+        bands: BANDS,
+        band: 3, // 20m
+        pwr: 27,
     },
     sw: Sw {
         disp: Disp { poll_ms: 250 },
@@ -34,14 +50,32 @@ pub const CFG: Config = Config {
     },
 };
 
-/// Total MultiSynth divider the parked PLL implies for the dial frequency.
-const PLL_DIAL_DIV: u64 = CFG.hw.rf.pll_parked.as_microhz() / CFG.ham.wspr_dial.as_microhz();
+/// Whether every band divides legally out of the parked PLL.
+///
+/// AN619 2.1.1: a fractional MultiSynth divider is only legal from 8 to 2048.
+/// The +1.4..1.6 kHz audio offset shifts the divider by under 10 ppm, so the
+/// dial settles the whole sub-band.
+const fn bands_fit(pll: Frequency, bands: &[Band]) -> bool {
+    let mut i = 0;
+    while i < bands.len() {
+        let div = pll.as_microhz() / bands[i].dial.as_microhz();
+        if div < 8 || div > 2048 {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
 
-// The PLL is never retuned for a transmission, so the two must stay in step.
-// AN619 2.1.1: a fractional MultiSynth divider is only legal from 8 to 2048.
+// The PLL is never retuned for a transmission, so it has to serve every band.
 const _: () = assert!(
-    PLL_DIAL_DIV >= 8 && PLL_DIAL_DIV <= 2048,
-    "hw.rf.pll_parked is not a usable multiple of ham.wspr_dial"
+    bands_fit(CFG.hw.rf.pll_parked, &CFG.ham.bands),
+    "hw.rf.pll_parked does not serve every band in ham.bands"
+);
+
+const _: () = assert!(
+    CFG.ham.band < CFG.ham.bands.len(),
+    "ham.band is out of range of ham.bands"
 );
 
 /// Root of the configuration tree.
@@ -59,8 +93,29 @@ pub struct Config {
 #[derive(Debug, Clone, Copy)]
 pub struct Ham {
     pub callsign: &'static str,
-    pub wspr_dial: Frequency,
+    /// Bands this beacon is built for, ascending.
+    pub bands: [Band; BANDS.len()],
+    /// Index into `bands` of the band in use. Reordering `BANDS` moves it -
+    /// keep the comment beside it honest. Becomes a per-slot choice once the
+    /// beacon rotates.
+    pub band: usize,
     pub pwr: u8,
+}
+
+/// One WSPR band, named by the USB dial frequency its sub-band is referenced
+/// to. Transmissions sit in the 200 Hz window `dial + 1400 .. dial + 1600`.
+#[derive(Debug, Clone, Copy)]
+pub struct Band {
+    pub dial: Frequency,
+}
+
+impl Band {
+    /// A band from its USB dial frequency in hertz.
+    pub const fn new(dial_hz: u32) -> Self {
+        Band {
+            dial: Frequency::from_hz(dial_hz),
+        }
+    }
 }
 
 /// Board-level configuration.
@@ -107,10 +162,12 @@ pub struct Rf {
     pub nominal: Frequency,
     /// Common PLL for tx and calib
     pub pll: PLL,
-    /// PLL is parked here at init, before any output is enabled. It is
-    /// 62x the centre of the 20m WSPR passband (dial + 1500 Hz audio offset),
-    /// which puts it inside the 600-900 MHz VCO range and lets both outputs be
-    /// derived from this one PLL with integer-ish multisynth dividers.
+    /// PLL is parked here at init, before any output is enabled, and is never
+    /// retuned: transmissions move only the output MultiSynth. So it has to
+    /// sit in the 600-900 MHz VCO range and divide legally into every band in
+    /// `ham.bands` and into `nominal` - see `bands_fit`. Landing on an exact
+    /// multiple of a band buys nothing; the 20-bit fractional divider holds
+    /// every band to well under a millihertz either way.
     pub pll_parked: Frequency,
     /// Output drive strength
     pub drive: DriveStrength,
