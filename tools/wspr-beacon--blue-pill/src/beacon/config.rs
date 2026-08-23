@@ -27,6 +27,10 @@ pub const CFG: Config = Config {
     },
     sw: Sw {
         disp: Disp { poll_ms: 250 },
+        wdg: Watchdog {
+            period_ms: 10000,
+            feed_ms: 3000,
+        },
     },
     hw: Hw {
         mcu: Mcu {
@@ -71,6 +75,23 @@ const fn bands_fit(pll: Frequency, bands: &[Band]) -> bool {
 const _: () = assert!(
     bands_fit(CFG.hw.rf.pll_parked, &CFG.ham.bands),
     "hw.rf.pll_parked does not serve every band in ham.bands"
+);
+
+// IWDG ceiling: /256 prescaler, 12-bit reload, 40 kHz nominal LSI (RM0008
+// Table 96). stm32f1xx-hal panics inside `start()` above this, and since the
+// period is a constant that folds to an unconditional panic at boot - leaving
+// a stripped binary that halts with the watchdog never started.
+const _: () = assert!(
+    CFG.sw.wdg.period_ms <= 26_214,
+    "sw.wdg.period_ms exceeds the IWDG maximum period"
+);
+
+// The HAL sizes the reload for 40 kHz, but LSI is 30-60 kHz (RM0008 7.2.5),
+// so the real timeout can be as short as 2/3 of period_ms. Feed twice per that
+// at the fast corner, or a fast part reboot-loops and a slow one never does.
+const _: () = assert!(
+    (CFG.sw.wdg.feed_ms as u32) * 2 <= CFG.sw.wdg.period_ms * 2 / 3,
+    "sw.wdg.feed_ms leaves no margin at the fast LSI corner"
 );
 
 const _: () = assert!(
@@ -177,6 +198,7 @@ pub struct Rf {
 #[derive(Debug, Clone, Copy)]
 pub struct Sw {
     pub disp: Disp,
+    pub wdg: Watchdog,
 }
 
 /// Display misc configuration
@@ -184,4 +206,13 @@ pub struct Sw {
 pub struct Disp {
     /// Display poll period
     pub poll_ms: u64,
+}
+
+/// Watchdog misc configuration
+#[derive(Debug, Clone, Copy)]
+pub struct Watchdog {
+    /// Watchdog period
+    pub period_ms: u32,
+    /// Watchdog feed period
+    pub feed_ms: u64,
 }

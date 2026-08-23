@@ -9,7 +9,7 @@ use panic_halt as _;
 
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1, SPI2])]
 mod app {
-    use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering, compiler_fence};
     use stm32f1xx_hal::i2c::BlockingI2c;
     use wspr_beacon::beacon::calibration::{Calibration, Reading, Step};
     use wspr_beacon::beacon::config::CFG;
@@ -37,6 +37,7 @@ mod app {
         prelude::*,
         serial,
         timer::Timer,
+        watchdog,
     };
     use wspr_encoder;
 
@@ -51,6 +52,7 @@ mod app {
 
     static PPS_WSPR_XMIT_GATE: AtomicBool = AtomicBool::new(false);
     static CALIB_PPS_EVT_GATE: AtomicBool = AtomicBool::new(false);
+    static WDG_BEAT: AtomicU32 = AtomicU32::new(0);
 
     stm32_tim4_monotonic!(Mono, 10_000);
 
@@ -76,6 +78,9 @@ mod app {
         // PPS task
         tim2: pac::TIM2,
         tim3: pac::TIM3,
+
+        // WDG task
+        wdg: watchdog::IndependentWatchdog,
     }
 
     #[init]
@@ -101,6 +106,11 @@ mod app {
         let gpioa = cx.device.GPIOA.split(&mut rcc);
         let mut gpiob = cx.device.GPIOB.split(&mut rcc);
         let channels = cx.device.DMA1.split(&mut rcc);
+
+        //// Init and start watchdog early to catch init issues as well
+        let mut wdg = watchdog::IndependentWatchdog::new(cx.device.IWDG);
+        wdg.stop_on_debug(&cx.device.DBGMCU, true);
+        wdg.start(CFG.sw.wdg.period_ms.millis());
 
         //// Si5351 generator
         let scl = gpiob.pb8;
@@ -217,6 +227,7 @@ mod app {
         Mono::start(rcc.clocks.pclk1_tim().to_Hz());
 
         display_task::spawn().unwrap();
+        wdg_task::spawn().unwrap();
 
         (
             Shared {
@@ -238,6 +249,9 @@ mod app {
                 // PPS task
                 tim2,
                 tim3,
+
+                // WDG task
+                wdg,
             },
         )
     }
@@ -262,6 +276,9 @@ mod app {
                 let Some(event) = event else {
                     break;
                 };
+
+                // notify watchdog that event loop is up and running
+                WDG_BEAT.fetch_add(1, Ordering::Relaxed);
 
                 // Event handling: benchmarking
                 #[cfg(feature = "dwt-profile")]
@@ -519,6 +536,23 @@ mod app {
         }
     }
 
+    #[task(priority = 1, local = [wdg])]
+    async fn wdg_task(cx: wdg_task::Context) {
+        let mut last: u32 = 0;
+
+        wspr_log!("WDG started");
+
+        loop {
+            let now = WDG_BEAT.load(Ordering::Relaxed);
+            if now != last {
+                cx.local.wdg.feed();
+                last = now;
+            }
+
+            Mono::delay(CFG.sw.wdg.feed_ms.millis()).await;
+        }
+    }
+
     #[task(priority = 10, shared = [queue, status, xmit])]
     async fn wspr(mut cx: wspr::Context, x: i32) {
         wspr_log!("WSPR started: {}", x);
@@ -580,6 +614,11 @@ mod app {
                 });
 
                 Mono::delay_until(deadline).await;
+
+                // on wspr tx event loop does not get any periodic events
+                // so notify watchdog on behalf of idle (sched) task
+                // that wspr transmission is up and running
+                WDG_BEAT.fetch_add(1, Ordering::Relaxed);
             }
         } else {
             wspr_log!("WSPR: empty wspr message or empty ppb not expected");
