@@ -12,6 +12,7 @@ mod app {
     use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
     use stm32f1xx_hal::i2c::BlockingI2c;
     use wspr_beacon::beacon::calibration::{Calibration, Reading, Step};
+    use wspr_beacon::beacon::config::CFG;
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
     use wspr_beacon::beacon::states::{ErrorState, State};
@@ -27,7 +28,7 @@ mod app {
     use heapless::binary_heap::{BinaryHeap, Max};
     use nmea0183;
     use rtic_monotonics::stm32::prelude::*;
-    use si5351::{ClockOutput, DriveStrength, Frequency, PLL, Si5351, Si5351Device, calibrate};
+    use si5351::{ClockOutput, Frequency, Si5351, Si5351Device, calibrate};
     use stm32f1xx_hal::{
         dma::CircBuffer,
         gpio::{self, Edge, ExtiPin, Input},
@@ -51,13 +52,6 @@ mod app {
     static PPS_WSPR_XMIT_GATE: AtomicBool = AtomicBool::new(false);
     static CALIB_PPS_EVT_GATE: AtomicBool = AtomicBool::new(false);
 
-    const SYSCLK_MHZ: u32 = 32;
-    const UBLOX_LEN: usize = 2048;
-    const CALLSIGN: &str = "R1BRL";
-    const PLL_PARKED: Frequency = Frequency::from_hz(62 * 14_097_100);
-    const CLK1_FREQ: u32 = 10_000_000;
-    const NOMINAL: Frequency = Frequency::from_hz(CLK1_FREQ);
-
     stm32_tim4_monotonic!(Mono, 10_000);
 
     #[shared]
@@ -70,7 +64,7 @@ mod app {
     #[local]
     struct Local {
         // GPS task
-        circ: Option<CircBuffer<[u8; UBLOX_LEN], serial::RxDma3>>,
+        circ: Option<CircBuffer<[u8; CFG.hw.gps.ublox_len], serial::RxDma3>>,
         parser: nmea0183::Parser,
 
         // PPS task
@@ -88,9 +82,9 @@ mod app {
     fn init(mut cx: init::Context) -> (Shared, Local) {
         let mut flash = cx.device.FLASH.constrain();
         let mut rcc = cx.device.RCC.freeze(
-            stm32f1xx_hal::rcc::Config::hse(8.MHz())
-                .sysclk(SYSCLK_MHZ.MHz())
-                .pclk1(16.MHz()),
+            stm32f1xx_hal::rcc::Config::hse(CFG.hw.mcu.crystal_mhz.MHz())
+                .sysclk(CFG.hw.mcu.sysclk_mhz.MHz())
+                .pclk1(CFG.hw.mcu.pclk_mhz.MHz()),
             &mut flash.acr,
         );
 
@@ -115,7 +109,7 @@ mod app {
         let i2c = cx.device.I2C1.remap(&mut afio.mapr).blocking_i2c(
             (scl, sda),
             Mode::Fast {
-                frequency: 400.kHz(),
+                frequency: CFG.hw.mcu.i2c_khz.kHz(),
                 duty_cycle: DutyCycle::Ratio2to1,
             },
             &mut rcc,
@@ -127,16 +121,18 @@ mod app {
 
         let mut xmit = Si5351Device::new_adafruit_module(i2c);
         xmit.init_adafruit_module().unwrap();
-        xmit.select_clock_pll(ClockOutput::Clk0, PLL::A);
-        xmit.select_clock_pll(ClockOutput::Clk1, PLL::A);
-        xmit.set_clock_drive(ClockOutput::Clk0, DriveStrength::_8mA);
-        xmit.set_clock_drive(ClockOutput::Clk1, DriveStrength::_8mA);
+        xmit.select_clock_pll(CFG.hw.rf.wspr_clk, CFG.hw.rf.pll);
+        xmit.select_clock_pll(CFG.hw.rf.calib_clk, CFG.hw.rf.pll);
+        xmit.set_clock_drive(CFG.hw.rf.wspr_clk, CFG.hw.rf.drive);
+        xmit.set_clock_drive(CFG.hw.rf.calib_clk, CFG.hw.rf.drive);
+        // disable all clocks on startup
         xmit.set_clock_enabled(ClockOutput::Clk0, false);
         xmit.set_clock_enabled(ClockOutput::Clk1, false);
         xmit.set_clock_enabled(ClockOutput::Clk2, false);
         xmit.flush_output_enabled().unwrap();
-        xmit.set_pll_frequency(PLL::A, PLL_PARKED).unwrap();
-        xmit.reset_pll(PLL::A).unwrap();
+        xmit.set_pll_frequency(CFG.hw.rf.pll, CFG.hw.rf.pll_parked)
+            .unwrap();
+        xmit.reset_pll(CFG.hw.rf.pll).unwrap();
 
         // Calibration task
         let (_pa15, pb3, _pb4) = afio.mapr.disable_jtag(gpioa.pa15, gpiob.pb3, gpiob.pb4);
@@ -193,7 +189,7 @@ mod app {
             .device
             .USART3
             .remap(&mut afio.mapr)
-            .serial((stx, srx), 9600.bps(), &mut rcc)
+            .serial((stx, srx), CFG.hw.gps.baudrate.bps(), &mut rcc)
             .split();
 
         // setup serial 'idle' interrupt before converting rx into rxdma
@@ -201,7 +197,8 @@ mod app {
 
         let nmea_parser = nmea0183::Parser::new()
             .sentence_filter(nmea0183::Sentence::RMC | nmea0183::Sentence::GGA);
-        let dmabuf = singleton!(: [[u8; UBLOX_LEN]; 2] = [[0; UBLOX_LEN]; 2]).unwrap();
+        let dmabuf =
+            singleton!(: [[u8; CFG.hw.gps.ublox_len]; 2] = [[0; CFG.hw.gps.ublox_len]; 2]).unwrap();
         let rxdma = rx.with_dma(channels.3);
         let circ = rxdma.circ_read(dmabuf);
 
@@ -272,13 +269,17 @@ mod app {
                     Event::GPS(_, _) => {
                         wspr_log!(
                             "Event GPS: DWT {} ms",
-                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                            cortex_m::peripheral::DWT::cycle_count()
+                                / CFG.hw.mcu.sysclk_mhz
+                                / 1_000
                         );
                     }
                     Event::NOGPS => {
                         wspr_log!(
                             "Event NOGPS: DWT {} ms",
-                            cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                            cortex_m::peripheral::DWT::cycle_count()
+                                / CFG.hw.mcu.sysclk_mhz
+                                / 1_000
                         );
                     }
                     _ => {}
@@ -316,7 +317,7 @@ mod app {
                                             "SCHED: QTH calculation: {} us",
                                             cortex_m::peripheral::DWT::cycle_count()
                                                 .wrapping_sub(qth_start)
-                                                / SYSCLK_MHZ
+                                                / CFG.hw.mcu.sysclk_mhz
                                         );
 
                                         wspr_log!("SCHED: calculated QTH {}", qth);
@@ -324,14 +325,14 @@ mod app {
                                         #[cfg(feature = "dwt-profile")]
                                         let enc_start = cortex_m::peripheral::DWT::cycle_count();
 
-                                        match wspr_encoder::encode(CALLSIGN, qth, 37) {
+                                        match wspr_encoder::encode(CFG.ham.callsign, qth, CFG.ham.pwr) {
                                             Ok(symbols) => {
                                                 #[cfg(feature = "dwt-profile")]
                                                 wspr_log!(
                                                     "SCHED: WSPR encoding: {} us",
                                                     cortex_m::peripheral::DWT::cycle_count()
                                                         .wrapping_sub(enc_start)
-                                                        / SYSCLK_MHZ
+                                                        / CFG.hw.mcu.sysclk_mhz
                                                 );
 
                                                 status.msg = Some(symbols);
@@ -380,7 +381,7 @@ mod app {
                             if time.2 as u8 == 10u8 {
                                 wspr_log!("SCHED: started calibration");
                                 CALIB_PPS_EVT_GATE.store(true, Ordering::Release);
-                                calib = Some(Calibration::new(NOMINAL));
+                                calib = Some(Calibration::new(CFG.hw.rf.nominal));
                                 status.state = State::TxCalib;
                             }
                             // 1 sec before WSPR slot: spawn WSPR task and move to TxActive state
@@ -414,7 +415,7 @@ mod app {
                                         wspr_log!(
                                             "SCHED: calibraton: {} ticks ({:+} vs nominal) ppb {}",
                                             ticks,
-                                            ticks as i64 - CLK1_FREQ as i64,
+                                            ticks as i64 - CFG.hw.rf.nominal.as_hz() as i64,
                                             ppb
                                         );
                                     }
@@ -435,13 +436,13 @@ mod app {
                                             dial.as_microhz()
                                         );
                                         cx.shared.xmit.lock(|xmit| {
-                                            xmit.set_clock_frequency_fixed_pll(ClockOutput::Clk1, dial)
+                                            xmit.set_clock_frequency_fixed_pll(CFG.hw.rf.calib_clk, dial)
                                                 .unwrap();
                                         });
                                     }
                                     Step::Stop(result) => {
                                         cx.shared.xmit.lock(|xmit| {
-                                            xmit.set_clock_enabled(ClockOutput::Clk1, false);
+                                            xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
                                             xmit.flush_output_enabled().unwrap();
                                         });
 
@@ -465,7 +466,7 @@ mod app {
                                 // Stop the clock and start over.
                                 wspr_log!("CALIB: unexpected state, stop and reset calibration");
                                 cx.shared.xmit.lock(|xmit| {
-                                    xmit.set_clock_enabled(ClockOutput::Clk1, false);
+                                    xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
                                     xmit.flush_output_enabled().unwrap();
                                 });
                                 CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
@@ -541,7 +542,7 @@ mod app {
             const WSPR_SYMBOL_SAMPLES: u64 = 8192;
             const WSPR_SAMPLE_RATE_HZ: u64 = 12000;
             // WSPR dial frequency for 20m band
-            let dial: Frequency = Frequency::from_hz(14_095_600);
+            let dial: Frequency = CFG.ham.wspr_dial;
             // WSPR audio offset is 1.5KHz above the dial frequency
             let offset = Frequency::from_hz(1_500);
 
@@ -575,7 +576,7 @@ mod app {
                 );
 
                 cx.shared.xmit.lock(|xmit| {
-                    xmit.set_clock_frequency_fixed_pll(ClockOutput::Clk0, freq)
+                    xmit.set_clock_frequency_fixed_pll(CFG.hw.rf.wspr_clk, freq)
                         .unwrap();
                 });
 
@@ -586,7 +587,7 @@ mod app {
         }
 
         cx.shared.xmit.lock(|xmit| {
-            xmit.set_clock_enabled(ClockOutput::Clk0, false);
+            xmit.set_clock_enabled(CFG.hw.rf.wspr_clk, false);
             xmit.flush_output_enabled().unwrap();
         });
 
@@ -651,7 +652,7 @@ mod app {
             #[cfg(feature = "dwt-profile")]
             wspr_log!(
                 "IRQ PPS: DWT {} ms",
-                cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                cortex_m::peripheral::DWT::cycle_count() / CFG.hw.mcu.sysclk_mhz / 1_000
             );
         }
     }
@@ -672,7 +673,7 @@ mod app {
             #[cfg(feature = "dwt-profile")]
             wspr_log!(
                 "IRQ GPS: DWT {} ms",
-                cortex_m::peripheral::DWT::cycle_count() / SYSCLK_MHZ / 1_000
+                cortex_m::peripheral::DWT::cycle_count() / CFG.hw.mcu.sysclk_mhz / 1_000
             );
 
             if let Some(circ) = cx.local.circ.take() {
@@ -680,9 +681,9 @@ mod app {
 
                 #[cfg(feature = "rtt-log-debug")]
                 {
-                    let recv = (UBLOX_LEN * 2)
+                    let recv = (CFG.hw.gps.ublox_len * 2)
                         - unsafe { (*DMA1::ptr()).ch3().ndtr().read().ndt().bits() as usize };
-                    buf[0][..recv.min(UBLOX_LEN)]
+                    buf[0][..recv.min(CFG.hw.gps.ublox_len)]
                         .iter()
                         .for_each(|&b| wspr_lognln!("{}", b as char));
                 }
@@ -741,7 +742,8 @@ mod app {
                     #[cfg(feature = "dwt-profile")]
                     wspr_log!(
                         "IRQ GPS: NMEA processing: {} us",
-                        cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start) / SYSCLK_MHZ
+                        cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start)
+                            / CFG.hw.mcu.sysclk_mhz
                     );
                 }
 
@@ -753,8 +755,6 @@ mod app {
 
     #[task(priority = 1, shared = [status], local = [display])]
     async fn display_task(mut cx: display_task::Context) {
-        const POLL_MS: u64 = 250;
-
         let Some(display) = cx.local.display.as_mut() else {
             return;
         };
@@ -775,7 +775,7 @@ mod app {
                 shown = Some(info);
             }
 
-            Mono::delay(POLL_MS.millis()).await;
+            Mono::delay(CFG.sw.disp.poll_ms.millis()).await;
         }
     }
 }
