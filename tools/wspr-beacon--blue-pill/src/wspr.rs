@@ -18,6 +18,7 @@ mod app {
     use wspr_beacon::beacon::states::{ErrorState, State, WSPRError};
     use wspr_beacon::beacon::status::{DisplayInfo, Status, Time};
     use wspr_beacon::wspr_log;
+    use wspr_beacon::{dwt_since, dwt_stamp, dwt_start};
 
     use wspr_beacon::hw::display::{self, StatusDisplay};
 
@@ -281,24 +282,9 @@ mod app {
                 WDG_BEAT.fetch_add(1, Ordering::Relaxed);
 
                 // Event handling: benchmarking
-                #[cfg(feature = "dwt-profile")]
                 match event {
-                    Event::GPS(_, _) => {
-                        wspr_log!(
-                            "Event GPS: DWT {} ms",
-                            cortex_m::peripheral::DWT::cycle_count()
-                                / CFG.hw.mcu.sysclk_mhz
-                                / 1_000
-                        );
-                    }
-                    Event::NOGPS => {
-                        wspr_log!(
-                            "Event NOGPS: DWT {} ms",
-                            cortex_m::peripheral::DWT::cycle_count()
-                                / CFG.hw.mcu.sysclk_mhz
-                                / 1_000
-                        );
-                    }
+                    Event::GPS(_, _) => dwt_stamp!("Event GPS"),
+                    Event::NOGPS => dwt_stamp!("Event NOGPS"),
                     _ => {}
                 }
 
@@ -324,33 +310,18 @@ mod app {
                                     longitude: lon,
                                 };
                                 let mut qth_buf: [u8; 4] = [0, 0, 0, 0];
-                                #[cfg(feature = "dwt-profile")]
-                                let qth_start = cortex_m::peripheral::DWT::cycle_count();
+                                dwt_start!(qth_start);
 
                                 let encoded = match qth_square(coords, &mut qth_buf) {
                                     Ok(qth) => {
-                                        #[cfg(feature = "dwt-profile")]
-                                        wspr_log!(
-                                            "SCHED: QTH calculation: {} us",
-                                            cortex_m::peripheral::DWT::cycle_count()
-                                                .wrapping_sub(qth_start)
-                                                / CFG.hw.mcu.sysclk_mhz
-                                        );
-
+                                        dwt_since!("SCHED: QTH calculation", qth_start);
                                         wspr_log!("SCHED: calculated QTH {}", qth);
 
-                                        #[cfg(feature = "dwt-profile")]
-                                        let enc_start = cortex_m::peripheral::DWT::cycle_count();
+                                        dwt_start!(enc_start);
 
                                         match wspr_encoder::encode(CFG.ham.callsign, qth, CFG.ham.pwr) {
                                             Ok(symbols) => {
-                                                #[cfg(feature = "dwt-profile")]
-                                                wspr_log!(
-                                                    "SCHED: WSPR encoding: {} us",
-                                                    cortex_m::peripheral::DWT::cycle_count()
-                                                        .wrapping_sub(enc_start)
-                                                        / CFG.hw.mcu.sysclk_mhz
-                                                );
+                                                dwt_since!("SCHED: WSPR encoding", enc_start);
 
                                                 status.msg = Some(symbols);
                                                 status.state = State::TxWait;
@@ -748,11 +719,7 @@ mod app {
                 enable();
             }
 
-            #[cfg(feature = "dwt-profile")]
-            wspr_log!(
-                "IRQ PPS: DWT {} ms",
-                cortex_m::peripheral::DWT::cycle_count() / CFG.hw.mcu.sysclk_mhz / 1_000
-            );
+            dwt_stamp!("IRQ PPS");
         }
     }
 
@@ -769,11 +736,7 @@ mod app {
             let _ = usart3.sr().read();
             let _ = usart3.dr().read();
 
-            #[cfg(feature = "dwt-profile")]
-            wspr_log!(
-                "IRQ GPS: DWT {} ms",
-                cortex_m::peripheral::DWT::cycle_count() / CFG.hw.mcu.sysclk_mhz / 1_000
-            );
+            dwt_stamp!("IRQ GPS");
 
             if let Some(circ) = cx.local.circ.take() {
                 let (buf, rxdma) = circ.stop();
@@ -794,8 +757,7 @@ mod app {
                 });
 
                 if process_nmea {
-                    #[cfg(feature = "dwt-profile")]
-                    let start = cortex_m::peripheral::DWT::cycle_count();
+                    dwt_start!(start);
 
                     let mut fix = false;
                     let mut lat: f64 = 0f64;
@@ -838,12 +800,7 @@ mod app {
                         }
                     });
 
-                    #[cfg(feature = "dwt-profile")]
-                    wspr_log!(
-                        "IRQ GPS: NMEA processing: {} us",
-                        cortex_m::peripheral::DWT::cycle_count().wrapping_sub(start)
-                            / CFG.hw.mcu.sysclk_mhz
-                    );
+                    dwt_since!("IRQ GPS: NMEA processing", start);
                 }
 
                 buf[0].fill(0);
