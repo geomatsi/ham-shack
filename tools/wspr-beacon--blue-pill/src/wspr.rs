@@ -15,7 +15,7 @@ mod app {
     use wspr_beacon::beacon::config::CFG;
     use wspr_beacon::beacon::events::Event;
     use wspr_beacon::beacon::qth::{Coordinates, qth_square};
-    use wspr_beacon::beacon::states::{ErrorState, State};
+    use wspr_beacon::beacon::states::{ErrorState, State, WSPRError};
     use wspr_beacon::beacon::status::{DisplayInfo, Status, Time};
     use wspr_beacon::wspr_log;
 
@@ -393,7 +393,10 @@ mod app {
                     State::TxWait => match event {
                         Event::GPS(_, (_, min, sec)) => {
                             let sec = sec as u8;
-                            wspr_log!("SCHED: TxWait: GPS: Time ({}:{})", min, sec);
+
+                            if sec.is_multiple_of(10) {
+                                wspr_log!("SCHED: TxWait: GPS: Time ({}:{})", min, sec);
+                            }
 
                             // Calibrate at :10 of every calib_period_min-th minute.
                             if sec == 10u8 && min.is_multiple_of(CFG.ham.calib_period_min) {
@@ -430,73 +433,91 @@ mod app {
                         _ => {}
                     },
                     State::TxCalib => {
-                        if let Event::CALIB(ticks) = event {
-                            if let Some(c) = calib.as_mut() {
-                                let step = c.gate(ticks);
+                        let result = 'calib: {
+                            if let Event::CALIB(ticks) = event {
+                                if let Some(c) = calib.as_mut() {
+                                    let step = c.gate(ticks);
 
-                                match c.last_reading() {
-                                    Reading::Ppb(ppb) => {
-                                        wspr_log!(
-                                            "SCHED: calibraton: {} ticks ({:+} vs nominal) ppb {}",
-                                            ticks,
-                                            ticks as i64 - CFG.hw.rf.nominal.as_hz() as i64,
-                                            ppb
-                                        );
+                                    match c.last_reading() {
+                                        Reading::Ppb(ppb) => {
+                                            wspr_log!(
+                                                "SCHED: calibraton: {} ticks ({:+} vs nominal) ppb {}",
+                                                ticks,
+                                                ticks as i64 - CFG.hw.rf.nominal.as_hz() as i64,
+                                                ppb
+                                            );
+                                        }
+                                        Reading::Rejected(ppb) => {
+                                            wspr_log!(
+                                                "SCHED: calibration: |pbb| {} is too large to be true, gate rejected",
+                                                ppb.abs()
+                                            );
+                                        }
+                                        Reading::Skipped => {}
                                     }
-                                    Reading::Rejected(ppb) => {
-                                        wspr_log!(
-                                            "SCHED: calibration: |pbb| {} is too large to be true, gate rejected",
-                                            ppb.abs()
-                                        );
-                                    }
-                                    Reading::Skipped => {}
-                                }
 
-                                match step {
-                                    Step::Continue => {}
-                                    Step::SetDial(dial) => {
-                                        wspr_log!(
-                                            "SCHED: calibration: set dial freq {} uHz",
-                                            dial.as_microhz()
-                                        );
-                                        cx.shared.xmit.lock(|xmit| {
-                                            xmit.set_clock_frequency_fixed_pll(CFG.hw.rf.calib_clk, dial)
-                                                .unwrap();
-                                        });
-                                    }
-                                    Step::Stop(result) => {
-                                        cx.shared.xmit.lock(|xmit| {
-                                            xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
-                                            xmit.flush_output_enabled().unwrap();
-                                        });
-
-                                        match result {
-                                            Some(ppb) => {
-                                                wspr_log!("CALIB: completed calibration with {} ppb", ppb)
-                                            }
-                                            None => {
-                                                wspr_log!("CALIB: calibration failed: no usable gate")
+                                    match step {
+                                        Step::Continue => {}
+                                        Step::SetDial(dial) => {
+                                            wspr_log!(
+                                                "SCHED: calibration: set dial freq {} uHz",
+                                                dial.as_microhz()
+                                            );
+                                            if let Err(e) = cx.shared.xmit.lock(|xmit| {
+                                                xmit.set_clock_frequency_fixed_pll(CFG.hw.rf.calib_clk, dial)
+                                            }) {
+                                                wspr_log!("SCHED: failed to change frequency for calibration: {}", e);
+                                                break 'calib Err(e.into());
                                             }
                                         }
+                                        Step::Stop(result) => {
+                                            if let Err(e) = cx.shared.xmit.lock(|xmit| {
+                                                xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
+                                                xmit.flush_output_enabled()
+                                            }) {
+                                                wspr_log!("SCHED: failed to stop RF after calibration: {}", e);
+                                                break 'calib Err(e.into());
+                                            }
 
-                                        CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
-                                        status.state = State::TxWait;
-                                        status.ppb = result;
-                                        calib = None;
+                                            match result {
+                                                Some(ppb) => {
+                                                    wspr_log!("SCHED: calibration completed with {} ppb", ppb)
+                                                }
+                                                None => {
+                                                    wspr_log!("SCHED: calibration failed: no usable gate")
+                                                }
+                                            }
+
+                                            CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
+                                            status.state = State::TxWait;
+                                            status.ppb = result;
+                                            calib = None;
+                                        }
                                     }
+                                } else {
+                                    // No calibration in flight: nothing sane to do with the tick.
+                                    // Stop the clock and start over.
+                                    wspr_log!("SCHED: unexpected calibration state... Stop and reset...");
+                                    break 'calib Err(WSPRError::CalibUnexpectedState);
                                 }
-                            } else {
-                                // No calibration in flight: nothing sane to do with the tick.
-                                // Stop the clock and start over.
-                                wspr_log!("CALIB: unexpected state, stop and reset calibration");
-                                cx.shared.xmit.lock(|xmit| {
-                                    xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
-                                    xmit.flush_output_enabled().unwrap();
-                                });
-                                CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
-                                status.state = State::TxWait;
-                                status.ppb = None;
                             }
+
+                            Ok(())
+                        };
+
+                        if result.is_err() {
+                           wspr_log!("SCHED: calibration failed");
+
+                           // NB: here we just attempt once more to disable RF
+                           // in reliable h/w design we should be able to
+                           // power off the si5351 generator
+                           cx.shared.xmit.lock(|xmit| {
+                               xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
+                               xmit.flush_output_enabled().ok();
+                           });
+
+                           // emergency exit from TxCalib state
+                           status.state = State::Error(ErrorState::CalibFailure);
                         }
                     }
                     State::TxActive => {
@@ -508,9 +529,15 @@ mod app {
                     }
                     State::Error(code) => {
                         wspr_log!("SCHED: error code {}", code);
+                        CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
+                        cx.shared.xmit.lock(|xmit| {
+                            xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
+                            xmit.set_clock_enabled(CFG.hw.rf.wspr_clk, false);
+                            xmit.flush_output_enabled().ok();
+                        });
+                        calib = None;
                         status.reset();
-                        // TODO
-                        // - add last error state to Status and display it for diagnostic purposes
+                        // TODO: add last error state to Status and display it for diagnostic purposes
                     }
                 });
             }
@@ -571,80 +598,107 @@ mod app {
             Mono::delay(1u64.millis()).await;
         }
 
-        // Only the message is copied out, not the whole `Status`: the symbols
-        // are needed for the next two minutes, the rest of the struct is not.
-        let msg = cx.shared.status.lock(|status| status.msg);
-        let ppb = cx.shared.status.lock(|status| status.ppb);
+        let result =
+            'xmit: {
+                // Only the message is copied out, not the whole `Status`: the symbols
+                // are needed for the next two minutes, the rest of the struct is not.
+                let msg = cx.shared.status.lock(|status| status.msg);
+                let ppb = cx.shared.status.lock(|status| status.ppb);
 
-        if let Some((symbols, ppb)) = msg.zip(ppb) {
-            // WSPR modulation is defined by 8192-sample symbols at a 12 kHz rate,
-            // giving a symbol period of exactly 8192/12000 s (682.667 ms) and a
-            // tone spacing of exactly 12000/8192 Hz (1.46484375 Hz).
-            const WSPR_SYMBOL_SAMPLES: u64 = 8192;
-            const WSPR_SAMPLE_RATE_HZ: u64 = 12000;
-            let dial: Frequency = CFG.ham.bands[CFG.ham.band].dial;
-            // WSPR audio offset is 1.5KHz above the dial frequency
-            let offset = Frequency::from_hz(1_500);
+                if let Some((symbols, ppb)) = msg.zip(ppb) {
+                    // WSPR modulation is defined by 8192-sample symbols at a 12 kHz rate,
+                    // giving a symbol period of exactly 8192/12000 s (682.667 ms) and a
+                    // tone spacing of exactly 12000/8192 Hz (1.46484375 Hz).
+                    const WSPR_SYMBOL_SAMPLES: u64 = 8192;
+                    const WSPR_SAMPLE_RATE_HZ: u64 = 12000;
+                    let dial: Frequency = CFG.ham.bands[CFG.ham.band].dial;
+                    // WSPR audio offset is 1.5KHz above the dial frequency
+                    let offset = Frequency::from_hz(1_500);
 
-            let tx_start = Mono::now();
+                    let tx_start = Mono::now();
 
-            for (num, symbol) in symbols.iter().enumerate() {
-                // Absolute deadline for the end of this symbol, computed from
-                // tx_start with integer math. Deriving each deadline straight from
-                // tx_start — rather than summing a rounded per-symbol duration —
-                // keeps the error per boundary instead of letting it accumulate:
-                // a rounded 683 ms period would drift ~54 ms by symbol 161.
-                let elapsed_us =
-                    WSPR_SYMBOL_SAMPLES * (num as u64 + 1) * 1_000_000u64 / WSPR_SAMPLE_RATE_HZ;
-                let deadline = tx_start + elapsed_us.micros();
+                    for (num, symbol) in symbols.iter().enumerate() {
+                        // Absolute deadline for the end of this symbol, computed from
+                        // tx_start with integer math. Deriving each deadline straight from
+                        // tx_start — rather than summing a rounded per-symbol duration —
+                        // keeps the error per boundary instead of letting it accumulate:
+                        // a rounded 683 ms period would drift ~54 ms by symbol 161.
+                        let elapsed_us = WSPR_SYMBOL_SAMPLES * (num as u64 + 1) * 1_000_000u64
+                            / WSPR_SAMPLE_RATE_HZ;
+                        let deadline = tx_start + elapsed_us.micros();
 
-                let mut freq = dial
-                    + offset
-                    + Frequency::from_ratio(
-                        WSPR_SAMPLE_RATE_HZ * (*symbol as u64),
-                        WSPR_SYMBOL_SAMPLES as u32,
-                    );
-                freq = calibrate::correct(freq, ppb);
+                        let mut freq = dial
+                            + offset
+                            + Frequency::from_ratio(
+                                WSPR_SAMPLE_RATE_HZ * (*symbol as u64),
+                                WSPR_SYMBOL_SAMPLES as u32,
+                            );
+                        freq = calibrate::correct(freq, ppb);
 
-                #[cfg(feature = "rtt-log-debug")]
-                wspr_log!(
-                    "WSPR: transmit symbol[{}] {} at freq {} with duration {:?}",
-                    num,
-                    symbol,
-                    freq.as_hz(),
-                    deadline - Mono::now()
-                );
+                        #[cfg(feature = "rtt-log-debug")]
+                        wspr_log!(
+                            "WSPR: transmit symbol[{}] {} at freq {} with duration {:?}",
+                            num,
+                            symbol,
+                            freq.as_hz(),
+                            deadline - Mono::now()
+                        );
 
-                cx.shared.xmit.lock(|xmit| {
-                    xmit.set_clock_frequency_fixed_pll(CFG.hw.rf.wspr_clk, freq)
-                        .unwrap();
-                });
+                        if let Err(e) = cx.shared.xmit.lock(|xmit| {
+                            xmit.set_clock_frequency_fixed_pll(CFG.hw.rf.wspr_clk, freq)
+                        }) {
+                            wspr_log!("WSPR: failed to set new frequency: {}", e);
+                            break 'xmit Err(e.into());
+                        }
 
-                Mono::delay_until(deadline).await;
+                        Mono::delay_until(deadline).await;
 
-                // on wspr tx event loop does not get any periodic events
-                // so notify watchdog on behalf of idle (sched) task
-                // that wspr transmission is up and running
-                WDG_BEAT.fetch_add(1, Ordering::Relaxed);
-            }
-        } else {
-            wspr_log!("WSPR: empty wspr message or empty ppb not expected");
+                        // on wspr tx event loop does not get any periodic events
+                        // so notify watchdog on behalf of idle (sched) task
+                        // that wspr transmission is up and running
+                        WDG_BEAT.fetch_add(1, Ordering::Relaxed);
+                    }
+                } else {
+                    wspr_log!("WSPR: empty wspr message or empty ppb not expected");
+                }
+
+                if let Err(e) = cx.shared.xmit.lock(|xmit| {
+                    xmit.set_clock_enabled(CFG.hw.rf.wspr_clk, false);
+                    xmit.flush_output_enabled()
+                }) {
+                    wspr_log!("WSPR: failed to disable RF: {}", e);
+                    break 'xmit Err(e.into());
+                }
+
+                if cx
+                    .shared
+                    .queue
+                    .lock(|queue| queue.push(Event::TXDONE))
+                    .is_err()
+                {
+                    wspr_log!("WSPR: failed to send TXDONE");
+                    break 'xmit Err(WSPRError::TxQueueError);
+                }
+
+                Ok(())
+            };
+
+        if result.is_err() {
+            wspr_log!("WSPR: transmission failed");
+
+            // NB: here we just attempt once more to disable RF
+            // in reliable h/w design we should be able to
+            // power off the si5351 generator
+            cx.shared.xmit.lock(|xmit| {
+                xmit.set_clock_enabled(CFG.hw.rf.wspr_clk, false);
+                xmit.flush_output_enabled().ok();
+            });
+
+            // emergency exit from TxActive state
+            cx.shared.status.lock(|status| {
+                status.state = State::Error(ErrorState::WSPRTxFailure);
+            });
         }
-
-        cx.shared.xmit.lock(|xmit| {
-            xmit.set_clock_enabled(CFG.hw.rf.wspr_clk, false);
-            xmit.flush_output_enabled().unwrap();
-        });
-
-        cx.shared.queue.lock(|queue| {
-            if queue.push(Event::TXDONE).is_err() {
-                wspr_log!("WSPR: failed to send TXDONE event");
-                // emergency exit from TxActive state
-                cx.shared.status.lock(|status| {
-                    status.state = State::Error(ErrorState::WSPRQueueFailure);
-                });
-            }
-        });
     }
 
     #[task(binds = EXTI1, priority = 15, local = [pps, tim2, tim3], shared = [status, queue])]
@@ -685,7 +739,7 @@ mod app {
                             wspr_log!("PPS: failed to send Calibration event");
                             // emergency exit from TxCalib state
                             cx.shared.status.lock(|status| {
-                                status.state = State::Error(ErrorState::CALIBQueueFailure);
+                                status.state = State::Error(ErrorState::PPSQueueFailure);
                             });
                         }
                     });

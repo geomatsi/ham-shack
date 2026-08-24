@@ -35,16 +35,16 @@ impl State {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ErrorState {
-    CALIBQueueFailure,
-    WSPRQueueFailure,
+    WSPRTxFailure,
     PPSQueueFailure,
+    CalibFailure,
 }
 
 impl ErrorState {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ErrorState::CALIBQueueFailure => "CALIB queue",
-            ErrorState::WSPRQueueFailure => "WSPR queue",
+            ErrorState::CalibFailure => "Calibration failure",
+            ErrorState::WSPRTxFailure => "WSPR Tx failure",
             ErrorState::PPSQueueFailure => "PPS queue",
         }
     }
@@ -53,10 +53,23 @@ impl ErrorState {
 impl fmt::Display for ErrorState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match *self {
-            ErrorState::CALIBQueueFailure => "CALIB queue failure",
-            ErrorState::WSPRQueueFailure => "WSPR queue failure",
+            ErrorState::CalibFailure => "Calibration failure",
+            ErrorState::WSPRTxFailure => "WSPR Tx failure",
             ErrorState::PPSQueueFailure => "PPS IRQ queue failure",
         };
         write!(f, "{}", s)
+    }
+}
+
+#[derive(Debug)]
+pub enum WSPRError {
+    Si5351Error(si5351::Error),
+    CalibUnexpectedState,
+    TxQueueError,
+}
+
+impl From<si5351::Error> for WSPRError {
+    fn from(e: si5351::Error) -> Self {
+        WSPRError::Si5351Error(e)
     }
 }
