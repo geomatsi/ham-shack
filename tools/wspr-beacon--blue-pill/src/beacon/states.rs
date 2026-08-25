@@ -66,6 +66,7 @@ pub enum WSPRError {
     Si5351Error(si5351::Error),
     CalibUnexpectedState,
     TxQueueError,
+    TxPPSError,
 }
 
 impl From<si5351::Error> for WSPRError {

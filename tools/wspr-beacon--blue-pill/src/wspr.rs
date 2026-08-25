@@ -571,17 +571,23 @@ mod app {
 
     #[task(priority = 10, shared = [queue, status, xmit])]
     async fn wspr(mut cx: wspr::Context, x: i32) {
-        wspr_log!("WSPR started: {}", x);
-
-        // spawned at :00, so the next PPS edge is the :01 a frame starts on
-        // TODO: handle lost GPS and missing PPS using Mono (?)
-        PPS_WSPR_XMIT_GATE.store(true, Ordering::Relaxed);
-        while PPS_WSPR_XMIT_GATE.load(Ordering::Acquire) {
-            Mono::delay(1u64.millis()).await;
-        }
+        wspr_log!("WSPR: started: {}", x);
 
         let result =
             'xmit: {
+                let mut ts = Mono::now();
+
+                // spawned at :00, so the next PPS edge is the :01 a frame starts on
+                PPS_WSPR_XMIT_GATE.store(true, Ordering::Relaxed);
+                while PPS_WSPR_XMIT_GATE.load(Ordering::Acquire) {
+                    Mono::delay(1u64.millis()).await;
+                    let elapsed_usecs = (Mono::now() - ts).to_micros();
+                    if elapsed_usecs > 1_200_000 {
+                        wspr_log!("WSPR: failed to start Tx due to lost PPS");
+                        break 'xmit Err(WSPRError::TxPPSError);
+                    }
+                }
+
                 // Only the message is copied out, not the whole `Status`: the symbols
                 // are needed for the next two minutes, the rest of the struct is not.
                 let msg = cx.shared.status.lock(|status| status.msg);
@@ -597,17 +603,18 @@ mod app {
                     // WSPR audio offset is 1.5KHz above the dial frequency
                     let offset = Frequency::from_hz(1_500);
 
-                    let tx_start = Mono::now();
+                    // derive each deadline from ts
+                    ts = Mono::now();
 
                     for (num, symbol) in symbols.iter().enumerate() {
                         // Absolute deadline for the end of this symbol, computed from
-                        // tx_start with integer math. Deriving each deadline straight from
-                        // tx_start — rather than summing a rounded per-symbol duration —
+                        // ts with integer math. Deriving each deadline straight from
+                        // ts — rather than summing a rounded per-symbol duration —
                         // keeps the error per boundary instead of letting it accumulate:
                         // a rounded 683 ms period would drift ~54 ms by symbol 161.
                         let elapsed_us = WSPR_SYMBOL_SAMPLES * (num as u64 + 1) * 1_000_000u64
                             / WSPR_SAMPLE_RATE_HZ;
-                        let deadline = tx_start + elapsed_us.micros();
+                        let deadline = ts + elapsed_us.micros();
 
                         let mut freq = dial
                             + offset
