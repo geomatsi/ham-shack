@@ -31,7 +31,7 @@ pub const CFG: Config = Config {
         disp: Disp { poll_ms: 250 },
         wdg: Watchdog {
             period_ms: 10000,
-            feed_ms: 3000,
+            feed_ms: 2000,
         },
     },
     hw: Hw {

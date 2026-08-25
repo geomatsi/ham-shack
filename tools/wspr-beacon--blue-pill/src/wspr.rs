@@ -9,7 +9,7 @@ use panic_halt as _;
 
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1, SPI2])]
 mod app {
-    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering, compiler_fence};
+    use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
     use stm32f1xx_hal::i2c::BlockingI2c;
     use wspr_beacon::beacon::calibration::{Calibration, Reading, Step};
     use wspr_beacon::beacon::config::CFG;
@@ -53,7 +53,6 @@ mod app {
 
     static PPS_WSPR_XMIT_GATE: AtomicBool = AtomicBool::new(false);
     static CALIB_PPS_EVT_GATE: AtomicBool = AtomicBool::new(false);
-    static WDG_BEAT: AtomicU32 = AtomicU32::new(0);
 
     stm32_tim4_monotonic!(Mono, 10_000);
 
@@ -80,7 +79,7 @@ mod app {
         tim2: pac::TIM2,
         tim3: pac::TIM3,
 
-        // WDG task
+        // Idle task
         wdg: watchdog::IndependentWatchdog,
     }
 
@@ -251,13 +250,13 @@ mod app {
                 tim2,
                 tim3,
 
-                // WDG task
+                // IDLE task
                 wdg,
             },
         )
     }
 
-    #[idle(shared = [status, queue, xmit])]
+    #[idle(local = [wdg], shared = [status, queue, xmit])]
     fn idle(mut cx: idle::Context) -> ! {
         let mut calib: Option<Calibration> = None;
         const NOGPS_LOG_PERIOD: u16 = 20;
@@ -278,9 +277,6 @@ mod app {
                     break;
                 };
 
-                // notify watchdog that event loop is up and running
-                WDG_BEAT.fetch_add(1, Ordering::Relaxed);
-
                 // Event handling: benchmarking
                 match event {
                     Event::GPS(_, _) => dwt_stamp!("Event GPS"),
@@ -294,6 +290,11 @@ mod app {
                     cx.shared.status.lock(|status| {
                         status.time = Some(Time { hours, minutes });
                     });
+                }
+
+                // Event handling: wdg feed
+                if matches!(event, Event::BEAT) {
+                    cx.local.wdg.feed();
                 }
 
                 // Event handling: main FSM
@@ -541,18 +542,16 @@ mod app {
         }
     }
 
-    #[task(priority = 1, local = [wdg])]
-    async fn wdg_task(cx: wdg_task::Context) {
-        let mut last: u32 = 0;
-
+    #[task(priority = 1, shared = [queue])]
+    async fn wdg_task(mut cx: wdg_task::Context) {
         wspr_log!("WDG started");
 
         loop {
-            let now = WDG_BEAT.load(Ordering::Relaxed);
-            if now != last {
-                cx.local.wdg.feed();
-                last = now;
-            }
+            cx.shared.queue.lock(|queue| {
+                if queue.push(Event::BEAT).is_err() {
+                    wspr_log!("WDG: failed to send BEAT event");
+                }
+            });
 
             Mono::delay(CFG.sw.wdg.feed_ms.millis()).await;
         }
@@ -623,11 +622,6 @@ mod app {
                         }
 
                         Mono::delay_until(deadline).await;
-
-                        // on wspr tx event loop does not get any periodic events
-                        // so notify watchdog on behalf of idle (sched) task
-                        // that wspr transmission is up and running
-                        WDG_BEAT.fetch_add(1, Ordering::Relaxed);
                     }
                 } else {
                     wspr_log!("WSPR: empty wspr message or empty ppb not expected");

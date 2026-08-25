@@ -6,6 +6,8 @@ pub enum Event {
     /// Empty
     #[default]
     NIL,
+    /// Multi-purpose heartbeat
+    BEAT,
     /// No GPS fix
     NOGPS,
     /// GPS data
@@ -20,6 +22,7 @@ impl Event {
     fn prio(self) -> u8 {
         match self {
             Event::NIL => 0u8,
+            Event::BEAT => 5u8,
             Event::NOGPS => 20u8,
             Event::GPS(_, _) => 20u8,
             Event::CALIB(_) => 30u8,
@@ -36,6 +39,7 @@ impl fmt::Display for Event {
             Event::GPS(_, _) => write!(f, "Event::GPS"),
             Event::CALIB(_) => write!(f, "Event::CALIB"),
             Event::TXDONE => write!(f, "Event::TXDONE"),
+            Event::BEAT => write!(f, "Event::BEAT"),
         }
     }
 }
@@ -48,6 +52,7 @@ impl Event {
             Event::GPS(_, _) => "Event::GPS",
             Event::CALIB(_) => "Event::CALIB",
             Event::TXDONE => "Event::TXDONE",
+            Event::BEAT => "Event::BEAT",
         }
     }
 }
