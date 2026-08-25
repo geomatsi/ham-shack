@@ -259,6 +259,11 @@ mod app {
     #[idle(local = [wdg], shared = [status, queue, xmit])]
     fn idle(mut cx: idle::Context) -> ! {
         let mut calib: Option<Calibration> = None;
+        // Calibration timeout is monitored by BEATs, so derive limit from a BEAT duration `wdg.feed_ms`.
+        const NOPPS_CALIB_MS: u64 = 20_000;
+        const NOPPS_CALIB_LIMIT: u16 = (NOPPS_CALIB_MS / CFG.sw.wdg.feed_ms) as u16;
+
+        let mut nopps_calib_tick: u16 = 0;
         const NOGPS_LOG_PERIOD: u16 = 20;
         let mut nogps_log_tick: u16 = 0;
 
@@ -376,6 +381,7 @@ mod app {
                                 CALIB_PPS_EVT_GATE.store(true, Ordering::Release);
                                 calib = Some(Calibration::new(CFG.hw.rf.nominal));
                                 status.state = State::TxCalib;
+                                nopps_calib_tick = 0;
                             }
 
                             // Spawn at :00 so the next PPS edge is the :01 a
@@ -404,9 +410,20 @@ mod app {
                         }
                         _ => {}
                     },
-                    State::TxCalib => {
-                        let result = 'calib: {
-                            if let Event::CALIB(ticks) = event {
+                    State::TxCalib => match event {
+                        Event::BEAT => {
+                            nopps_calib_tick = nopps_calib_tick.saturating_add(1);
+                            // PPS gates land every 2 s: silence means PPS or the path to it
+                            // died, leaving RF up from the first Step::SetDial.
+                            if nopps_calib_tick >= NOPPS_CALIB_LIMIT {
+                                wspr_log!("SCHED: no PPS-gated measurement during calibration");
+                                // emergency exit from TxCalib state
+                                status.state = State::Error(ErrorState::CalibFailure);
+                            }
+                        }
+                        Event::CALIB(ticks) => {
+                            nopps_calib_tick = 0;
+                            let result = 'calib: {
                                 if let Some(c) = calib.as_mut() {
                                     let step = c.gate(ticks);
 
@@ -472,25 +489,17 @@ mod app {
                                     wspr_log!("SCHED: unexpected calibration state... Stop and reset...");
                                     break 'calib Err(WSPRError::CalibUnexpectedState);
                                 }
+
+                                Ok(())
+                            };
+
+                            if result.is_err() {
+                                wspr_log!("SCHED: calibration failed");
+                                // RF teardown is State::Error's job, one BEAT away at most.
+                                status.state = State::Error(ErrorState::CalibFailure);
                             }
-
-                            Ok(())
-                        };
-
-                        if result.is_err() {
-                           wspr_log!("SCHED: calibration failed");
-
-                           // NB: here we just attempt once more to disable RF
-                           // in reliable h/w design we should be able to
-                           // power off the si5351 generator
-                           cx.shared.xmit.lock(|xmit| {
-                               xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
-                               xmit.flush_output_enabled().ok();
-                           });
-
-                           // emergency exit from TxCalib state
-                           status.state = State::Error(ErrorState::CalibFailure);
                         }
+                        _ => {}
                     }
                     State::TxActive => {
                         if let Event::TXDONE = event {
@@ -502,6 +511,9 @@ mod app {
                     State::Error(code) => {
                         wspr_log!("SCHED: error code {}", code);
                         CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
+                        // NB: only an attempt - same I2C path that may have just failed.
+                        // In reliable h/w design we should be able to
+                        // power off the si5351 generator
                         cx.shared.xmit.lock(|xmit| {
                             xmit.set_clock_enabled(CFG.hw.rf.calib_clk, false);
                             xmit.set_clock_enabled(CFG.hw.rf.wspr_clk, false);
