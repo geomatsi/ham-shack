@@ -584,10 +584,9 @@ mod app {
                     }
                 }
 
-                // Only the message is copied out, not the whole `Status`: the symbols
-                // are needed for the next two minutes, the rest of the struct is not.
-                let msg = cx.shared.status.lock(|status| status.msg);
-                let ppb = cx.shared.status.lock(|status| status.ppb);
+                // Only the message and ppb are copied out, not the whole `Status`:
+                // the symbols and ppb are needed for the next two minutes, the rest of the struct is not.
+                let (msg, ppb) = cx.shared.status.lock(|status| (status.msg, status.ppb));
 
                 if let Some((symbols, ppb)) = msg.zip(ppb) {
                     // WSPR modulation is defined by 8192-sample symbols at a 12 kHz rate,
@@ -734,8 +733,6 @@ mod app {
 
     #[task(binds = USART3, priority = 5, local = [circ, parser], shared = [status, queue])]
     fn gps(mut cx: gps::Context) {
-        let mut process_nmea = true;
-
         // Note: rx is 'moved' on rx.with_dma, so we can not use rx anymore.
         // IIUC there is no legitimate way to use rx.is_idle together with rxdma in current stm32f1xx HAL code.
         // For now just use direct unsafe access to USART3 and DMA1 regs to check interrupt status and transferred bytes.
@@ -759,11 +756,10 @@ mod app {
                         .for_each(|&b| wspr_lognln!("{}", b as char));
                 }
 
-                cx.shared.status.lock(|status| {
-                    if matches!(status.state, State::TxActive | State::TxCalib) {
-                        process_nmea = false;
-                    }
-                });
+                let process_nmea = cx
+                    .shared
+                    .status
+                    .lock(|status| !matches!(status.state, State::TxActive | State::TxCalib));
 
                 if process_nmea {
                     dwt_start!(start);
