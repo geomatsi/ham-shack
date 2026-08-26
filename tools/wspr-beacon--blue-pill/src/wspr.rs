@@ -307,55 +307,48 @@ mod app {
                         Event::GPS((lat, lon), _) => {
                             wspr_log!("SCHED: GPS coords ({}, {})", lat as u8, lon as u8);
 
-                            if status.msg.is_some() {
-                                status.state = State::TxWait;
-                            } else {
-                                let coords = Coordinates {
-                                    latitude: lat,
-                                    longitude: lon,
-                                };
-                                let mut qth_buf: [u8; 4] = [0, 0, 0, 0];
-                                dwt_start!(qth_start);
+                            let coords = Coordinates {
+                                latitude: lat,
+                                longitude: lon,
+                            };
+                            let mut qth_buf: [u8; 4] = [0, 0, 0, 0];
+                            dwt_start!(qth_start);
 
-                                let encoded = match qth_square(coords, &mut qth_buf) {
-                                    Ok(qth) => {
-                                        dwt_since!("SCHED: QTH calculation", qth_start);
-                                        wspr_log!("SCHED: calculated QTH {}", qth);
+                            let encoded = match qth_square(coords, &mut qth_buf) {
+                                Ok(qth) => {
+                                    dwt_since!("SCHED: QTH calculation", qth_start);
+                                    wspr_log!("SCHED: calculated QTH {}", qth);
 
-                                        dwt_start!(enc_start);
+                                    dwt_start!(enc_start);
 
-                                        match wspr_encoder::encode(CFG.ham.callsign, qth, CFG.ham.pwr) {
-                                            Ok(symbols) => {
-                                                dwt_since!("SCHED: WSPR encoding", enc_start);
+                                    match wspr_encoder::encode(CFG.ham.callsign, qth, CFG.ham.pwr) {
+                                        Ok(symbols) => {
+                                            dwt_since!("SCHED: WSPR encoding", enc_start);
 
-                                                status.msg = Some(symbols);
-                                                status.state = State::TxWait;
+                                            Some(symbols)
+                                        }
+                                        Err(e) => {
+                                            wspr_log!(
+                                                "SCHED: fatal WSPR encoding failure: {:?}",
+                                                e
+                                            );
 
-                                                true
-                                            }
-                                            Err(e) => {
-                                                wspr_log!(
-                                                    "SCHED: fatal WSPR encoding failure: {:?}",
-                                                    e
-                                                );
-
-                                                false
-                                            }
+                                            None
                                         }
                                     }
-                                    Err(e) => {
-                                        wspr_log!("SCHED: fatal QTH calculation failure: {:?}", e);
-
-                                        false
-                                    }
-                                };
-
-                                // Display QTH only if the WSPR encoding succeeded. It is
-                                // published here rather than next to `status.msg` above
-                                // because `qth` borrows `qth_buf` until the match ends.
-                                if encoded {
-                                    status.qth = Some(qth_buf);
                                 }
+                                Err(e) => {
+                                    wspr_log!("SCHED: fatal QTH calculation failure: {:?}", e);
+
+                                    None
+                                }
+                            };
+
+                            // Published together: `qth` borrows `qth_buf` until the match ends.
+                            if let Some(symbols) = encoded {
+                                status.msg = Some(symbols);
+                                status.qth = Some(qth_buf);
+                                status.state = State::TxWait;
                             }
                         }
                         Event::NOGPS => {
