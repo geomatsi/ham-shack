@@ -1,10 +1,7 @@
 use core::cmp::Ordering;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub enum Event {
-    /// Empty
-    #[default]
-    NIL,
     /// Multi-purpose heartbeat
     BEAT,
     /// No GPS fix
@@ -20,7 +17,6 @@ pub enum Event {
 impl Event {
     fn prio(self) -> u8 {
         match self {
-            Event::NIL => 0u8,
             Event::BEAT => 5u8,
             Event::NOGPS => 20u8,
             Event::GPS(_, _) => 20u8,
