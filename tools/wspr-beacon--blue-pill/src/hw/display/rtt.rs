@@ -12,7 +12,6 @@ use crate::beacon::states::State;
 use crate::beacon::status::DisplayInfo;
 use crate::wspr_log;
 
-use rtt_target::rprintln;
 use stm32f1xx_hal::rcc::Rcc;
 
 pub struct Display;

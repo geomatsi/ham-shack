@@ -47,10 +47,8 @@ mod app {
     #[cfg(feature = "rtt-log-debug")]
     use stm32f1xx_hal::pac::DMA1;
 
-    #[cfg(feature = "rtt-log-debug")]
-    use rtt_target::rprint;
     #[cfg(feature = "rtt-log")]
-    use rtt_target::{rprintln, rtt_init_print};
+    use rtt_target::rtt_init_print;
 
     static PPS_WSPR_XMIT_GATE: AtomicBool = AtomicBool::new(false);
     static CALIB_PPS_EVT_GATE: AtomicBool = AtomicBool::new(false);
