@@ -10,6 +10,7 @@ use panic_halt as _;
 #[rtic::app(device = stm32f1xx_hal::pac, dispatchers = [SPI1, SPI2])]
 mod app {
     use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
+    use rtic_monotonics::rtic_time::monotonic::TimerQueueBasedInstant;
     use stm32f1xx_hal::i2c::BlockingI2c;
     use wspr_beacon::beacon::calibration::{Calibration, Reading, Step};
     use wspr_beacon::beacon::config::CFG;
@@ -392,7 +393,7 @@ mod app {
                                 && min.is_multiple_of(CFG.ham.tx_period_min)
                                 && status.ppb.is_some()
                             {
-                                match wspr::spawn(42) {
+                                match wspr::spawn() {
                                     Ok(_) => {
                                         wspr_log!("SCHED: spawned WSPR");
                                         status.state = State::TxActive;
@@ -570,8 +571,12 @@ mod app {
     }
 
     #[task(priority = 10, shared = [queue, status, xmit])]
-    async fn wspr(mut cx: wspr::Context, x: i32) {
-        wspr_log!("WSPR: started: {}", x);
+    async fn wspr(mut cx: wspr::Context) {
+        // Pseudo random slot selection
+        let h = (Mono::now().ticks() as u32).wrapping_mul(2_654_435_761);
+        let slot: u32 = ((h as u64 * 10) >> 32) as u32;
+
+        wspr_log!("WSPR: started in slot {}", slot);
 
         let result =
             'xmit: {
@@ -600,8 +605,8 @@ mod app {
                     const WSPR_SYMBOL_SAMPLES: u64 = 8192;
                     const WSPR_SAMPLE_RATE_HZ: u64 = 12000;
                     let dial: Frequency = CFG.ham.bands[CFG.ham.band].dial;
-                    // WSPR audio offset is 1.5KHz above the dial frequency
-                    let offset = Frequency::from_hz(1_500);
+                    // WSPR audio offset is 1.4KHz + 20 * slot  above the dial frequency with slot = 0..9
+                    let offset = Frequency::from_hz(1_400 + slot * 20);
 
                     // derive each deadline from ts
                     ts = Mono::now();
