@@ -367,8 +367,8 @@ mod app {
                                 wspr_log!("SCHED: TxWait: GPS: Time ({}:{})", min, sec);
                             }
 
-                            // Calibrate at :10 of every calib_period_min-th minute.
-                            if sec == 10u8 && min.is_multiple_of(CFG.ham.calib_period_min) {
+                            // Calibrate at :00 one minute before each transmission
+                            if sec == 0u8 && (min + 1).is_multiple_of(CFG.ham.tx_period_min) {
                                 wspr_log!("SCHED: started calibration");
                                 CALIB_PPS_EVT_GATE.store(true, Ordering::Release);
                                 calib = Some(Calibration::new(CFG.hw.rf.nominal));
