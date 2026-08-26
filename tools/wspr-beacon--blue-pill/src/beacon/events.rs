@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-use core::fmt;
 
 #[derive(Clone, Copy, Default)]
 pub enum Event {
@@ -27,32 +26,6 @@ impl Event {
             Event::GPS(_, _) => 20u8,
             Event::CALIB(_) => 30u8,
             Event::TXDONE => 30u8,
-        }
-    }
-}
-
-impl fmt::Display for Event {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Event::NIL => write!(f, "Event::NIL"),
-            Event::NOGPS => write!(f, "Event::NOGPS"),
-            Event::GPS(_, _) => write!(f, "Event::GPS"),
-            Event::CALIB(_) => write!(f, "Event::CALIB"),
-            Event::TXDONE => write!(f, "Event::TXDONE"),
-            Event::BEAT => write!(f, "Event::BEAT"),
-        }
-    }
-}
-
-impl Event {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Event::NIL => "Event::NIL",
-            Event::NOGPS => "Event::NOGPS",
-            Event::GPS(_, _) => "Event::GPS",
-            Event::CALIB(_) => "Event::CALIB",
-            Event::TXDONE => "Event::TXDONE",
-            Event::BEAT => "Event::BEAT",
         }
     }
 }

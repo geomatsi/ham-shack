@@ -508,7 +508,7 @@ mod app {
                         }
                     }
                     State::Error(code) => {
-                        wspr_log!("SCHED: error code {}", code);
+                        wspr_log!("SCHED: error code {}", code.as_str());
                         CALIB_PPS_EVT_GATE.store(false, Ordering::Release);
                         // NB: only an attempt - same I2C path that may have just failed.
                         // In reliable h/w design we should be able to

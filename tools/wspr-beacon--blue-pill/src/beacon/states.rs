@@ -1,5 +1,3 @@
-use core::fmt;
-
 #[derive(Clone, Copy, PartialEq)]
 pub enum State {
     GpsWait,
@@ -7,18 +5,6 @@ pub enum State {
     TxCalib,
     TxActive,
     Error(ErrorState),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            State::GpsWait => write!(f, "GPS Wait"),
-            State::TxWait => write!(f, "TX Wait"),
-            State::TxCalib => write!(f, "Calibration"),
-            State::TxActive => write!(f, "Transmitting"),
-            State::Error(code) => write!(f, "Err:{}", code), // Dynamically formats the number!
-        }
-    }
 }
 
 impl State {
@@ -45,23 +31,11 @@ impl ErrorState {
         match self {
             ErrorState::CalibFailure => "Calibration failure",
             ErrorState::WSPRTxFailure => "WSPR Tx failure",
-            ErrorState::PPSQueueFailure => "PPS queue",
+            ErrorState::PPSQueueFailure => "PPS IRQ queue failure",
         }
     }
 }
 
-impl fmt::Display for ErrorState {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let s = match *self {
-            ErrorState::CalibFailure => "Calibration failure",
-            ErrorState::WSPRTxFailure => "WSPR Tx failure",
-            ErrorState::PPSQueueFailure => "PPS IRQ queue failure",
-        };
-        write!(f, "{}", s)
-    }
-}
-
-#[derive(Debug)]
 pub enum WSPRError {
     Si5351Error(si5351::Error),
     CalibUnexpectedState,
