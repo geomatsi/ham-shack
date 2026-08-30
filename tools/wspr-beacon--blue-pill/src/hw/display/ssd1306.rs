@@ -94,7 +94,7 @@ impl StatusDisplay for Display {
     /// `flush()` only transmits the dirty rectangle, but `clear()` marks the
     /// entire framebuffer dirty, so this always pays the full-frame cost of
     /// ~213 ms on the bit-banged bus. That is acceptable while the panel only
-    /// carries two lines of text that change a few times a minute.
+    /// carries a few lines of text that change a few times a minute.
     ///
     /// Anything updating at symbol rate — a TX progress bar, say — must not go
     /// through `clear()`: repainting just the affected region instead keeps the
@@ -106,14 +106,15 @@ impl StatusDisplay for Display {
             .map_err(|_| DisplayError::Bus)?;
 
         self.line(info.state.as_str(), 0)?;
+        self.line(info.band, LINE_H)?;
 
         if let Some(qth) = info.qth_str() {
-            self.line(qth, LINE_H)?;
+            self.line(qth, 2 * LINE_H)?;
         }
 
         if let Some(time) = info.time {
             let mut buf = [0u8; 5];
-            self.line(time.hhmm(&mut buf), 2 * LINE_H)?;
+            self.line(time.hhmm(&mut buf), 3 * LINE_H)?;
         }
 
         self.panel.flush().map_err(|_| DisplayError::Bus)

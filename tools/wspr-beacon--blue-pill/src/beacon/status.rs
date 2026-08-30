@@ -1,3 +1,4 @@
+use crate::beacon::config::CFG;
 use crate::beacon::states::State;
 
 /// Symbols in one WSPR transmission.
@@ -72,6 +73,7 @@ impl Status {
     pub fn display_info(&self) -> DisplayInfo {
         DisplayInfo {
             state: self.state,
+            band: CFG.ham.bands[CFG.ham.band].name,
             qth: self.qth,
             time: self.time,
         }
@@ -88,6 +90,8 @@ impl Default for Status {
 #[derive(Clone, Copy, PartialEq)]
 pub struct DisplayInfo {
     pub state: State,
+    /// Build-time today; a per-slot choice once the beacon rotates bands.
+    pub band: &'static str,
     pub qth: Option<[u8; 4]>,
     pub time: Option<Time>,
 }

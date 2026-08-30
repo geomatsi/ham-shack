@@ -7,14 +7,14 @@ use si5351::{ClockOutput, DriveStrength, Frequency, PLL};
 /// These are the standard WSPR dial frequencies; worth a sanity check against
 /// your own reference before the first transmission on a band.
 pub const BANDS: [Band; 8] = [
-    Band::new(3_568_600),  // 80m
-    Band::new(7_038_600),  // 40m
-    Band::new(10_138_700), // 30m  WARC
-    Band::new(14_095_600), // 20m
-    Band::new(18_104_600), // 17m  WARC
-    Band::new(21_094_600), // 15m
-    Band::new(24_924_600), // 12m  WARC
-    Band::new(28_124_600), // 10m
+    Band::new(3_568_600, "3.5MHz / 80m"),
+    Band::new(7_038_600, "7MHz / 40m"),
+    Band::new(10_138_700, "10MHz / 30m"), // WARC
+    Band::new(14_095_600, "14MHz / 20m"),
+    Band::new(18_104_600, "18MHz / 17m"), // WARC
+    Band::new(21_094_600, "21MHz / 15m"),
+    Band::new(24_924_600, "24MHz / 12m"), // WARC
+    Band::new(28_124_600, "28MHz / 10m"),
 ];
 
 /// The build-time configuration of this beacon.
@@ -147,13 +147,16 @@ pub struct Ham {
 #[derive(Debug, Clone, Copy)]
 pub struct Band {
     pub dial: Frequency,
+    /// How the band is named on a display.
+    pub name: &'static str,
 }
 
 impl Band {
     /// A band from its USB dial frequency in hertz.
-    pub const fn new(dial_hz: u32) -> Self {
+    pub const fn new(dial_hz: u32, name: &'static str) -> Self {
         Band {
             dial: Frequency::from_hz(dial_hz),
+            name,
         }
     }
 }
