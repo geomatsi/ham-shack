@@ -563,9 +563,19 @@ mod app {
 
     #[task(priority = 10, shared = [queue, status, xmit])]
     async fn wspr(mut cx: wspr::Context) {
-        // Pseudo random slot selection
+        // Slot layout, shared by the draw here and the Tx offset below. The assert
+        // holds the top slot's highest tone inside the 1400-1600 Hz sub-band.
+        const SLOT_COUNT: u32 = 10;
+        const SLOT_BASE_HZ: u32 = 1_400;
+        const SLOT_STEP_HZ: u32 = 20;
+        // 4 tones spaced 1.46484375 Hz
+        const SLOT_SPAN_HZ: u32 = 5;
+        const _: () =
+            assert!(SLOT_BASE_HZ + (SLOT_COUNT - 1) * SLOT_STEP_HZ + SLOT_SPAN_HZ <= 1_600);
+
+        // Pseudo random slot: fixed-point reduction onto 0..SLOT_COUNT, exact and total
         let h = (Mono::now().ticks() as u32).wrapping_mul(2_654_435_761);
-        let slot: u32 = ((h as u64 * 10) >> 32) as u32;
+        let slot: u32 = ((h as u64 * SLOT_COUNT as u64) >> 32) as u32;
 
         wspr_log!("WSPR: started in slot {}", slot);
 
@@ -595,8 +605,8 @@ mod app {
                     const WSPR_SYMBOL_SAMPLES: u64 = 8192;
                     const WSPR_SAMPLE_RATE_HZ: u64 = 12000;
                     let dial: Frequency = CFG.ham.bands[CFG.ham.band].dial;
-                    // WSPR audio offset is 1.4KHz + 20 * slot  above the dial frequency with slot = 0..9
-                    let offset = Frequency::from_hz(1_400 + slot * 20);
+                    // audio offset of this slot above the dial frequency
+                    let offset = Frequency::from_hz(SLOT_BASE_HZ + slot * SLOT_STEP_HZ);
 
                     // derive each deadline from ts
                     ts = Mono::now();
