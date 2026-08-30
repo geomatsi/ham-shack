@@ -526,11 +526,11 @@ mod app {
             // check-then-WFI race: the TIM4 monotonic keeps two always-on periodic
             // interrupts running (full- and half-period, see the rtic-monotonics
             // stm32 backend) that wake the core regardless of any pending `await`.
-            // At the current 100 kHz tick rate the 16-bit timer wraps every
-            // 655.36 ms, so those land every ~328 ms. An event queued in the small
-            // window between this check and the WFI is therefore drained within
-            // that, still inside the 1 Hz GPS/PPS cadence, so no event is stranded
-            // in practice.
+            // At the current 10 kHz tick rate the 16-bit timer wraps every
+            // 6.5536 s, so those land only every ~3.28 s. What actually bounds the
+            // window is the 1 Hz PPS and USART3 interrupts: an event queued between
+            // this check and the WFI is drained within ~1 s, so no event is
+            // stranded in practice.
             let empty = cx.shared.queue.lock(|queue| {
                 compiler_fence(Ordering::SeqCst);
                 queue.is_empty()
