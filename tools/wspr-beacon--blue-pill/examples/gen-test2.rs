@@ -70,7 +70,7 @@ use panic_halt as _;
 #[cfg(feature = "rtt-log")]
 use panic_rtt_target as _;
 #[cfg(feature = "rtt-log")]
-use rtt_target::{rprintln, rtt_init_print};
+use rtt_target::rtt_init_print;
 use si5351::{ClockOutput, DriveStrength, Frequency, PLL, Si5351, Si5351Device};
 use stm32f1xx_hal::{
     i2c::{DutyCycle, Mode},

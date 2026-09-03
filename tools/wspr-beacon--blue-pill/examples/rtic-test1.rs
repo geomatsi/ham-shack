@@ -21,7 +21,7 @@ mod app {
     };
 
     #[cfg(feature = "rtt-log")]
-    use rtt_target::{rprintln, rtt_init_print};
+    use rtt_target::rtt_init_print;
 
     const SYSCLK_MHZ: u32 = 32;
 
@@ -46,7 +46,7 @@ mod app {
     }
 
     #[init]
-    fn init(cx: init::Context) -> (Shared, Local) {
+    fn init(mut cx: init::Context) -> (Shared, Local) {
         let mut flash = cx.device.FLASH.constrain();
         let mut rcc = cx.device.RCC.freeze(
             stm32f1xx_hal::rcc::Config::hse(8.MHz())

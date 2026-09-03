@@ -55,7 +55,7 @@
 use panic_rtt_target as _;
 
 #[cfg(feature = "rtt-log")]
-use rtt_target::{rprintln, rtt_init_print};
+use rtt_target::rtt_init_print;
 
 #[cfg(not(feature = "rtt-log"))]
 use panic_halt as _;
