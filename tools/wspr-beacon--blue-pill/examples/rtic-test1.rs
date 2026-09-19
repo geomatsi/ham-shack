@@ -11,10 +11,11 @@ use panic_halt as _;
 mod app {
     use core::sync::atomic::{AtomicBool, Ordering};
     use rtic_monotonics::stm32::prelude::*;
+    use wspr_beacon::beacon::config;
     use wspr_beacon::wspr_log;
 
     use stm32f1xx_hal::{
-        gpio::{self, Output, PushPull},
+        gpio::{ErasedPin, Output, PushPull},
         pac,
         prelude::*,
         timer,
@@ -38,7 +39,7 @@ mod app {
     #[local]
     struct Local {
         // LED task
-        led: gpio::gpioc::PC13<Output<PushPull>>,
+        led: ErasedPin<Output<PushPull>>,
         tim: timer::CounterMs<pac::TIM2>,
 
         // IDLE task
@@ -46,7 +47,7 @@ mod app {
     }
 
     #[init]
-    fn init(mut cx: init::Context) -> (Shared, Local) {
+    fn init(cx: init::Context) -> (Shared, Local) {
         let mut flash = cx.device.FLASH.constrain();
         let mut rcc = cx.device.RCC.freeze(
             stm32f1xx_hal::rcc::Config::hse(8.MHz())
@@ -64,15 +65,23 @@ mod app {
         #[cfg(feature = "rtt-log")]
         rtt_init_print!();
 
-        let mut gpioc = cx.device.GPIOC.split(&mut rcc);
-
         //// IDLE task
 
         let delay = cx.device.TIM1.delay_us(&mut rcc);
 
         //// LED task
 
-        let led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
+        let led: ErasedPin<Output<PushPull>> = match config::CFG.hw.model {
+            config::BluePill::Classic => {
+                let mut gpioc = cx.device.GPIOC.split(&mut rcc);
+                gpioc.pc13.into_push_pull_output(&mut gpioc.crh).erase()
+            }
+            config::BluePill::Plus => {
+                let mut gpiob = cx.device.GPIOB.split(&mut rcc);
+                gpiob.pb2.into_push_pull_output(&mut gpiob.crl).erase()
+            }
+        };
+
         let mut tim = cx.device.TIM2.counter_ms(&mut rcc);
         tim.start(1000u32.millis()).unwrap();
         tim.listen(timer::Event::Update);

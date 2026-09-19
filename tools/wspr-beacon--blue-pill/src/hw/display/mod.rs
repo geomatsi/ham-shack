@@ -41,8 +41,8 @@ pub trait StatusDisplay {
 /// mode changes need `&mut Cr`, and that token cannot be shared, so it moves
 /// here whole; that is also why the pins come one by one rather than as a split
 /// `Parts`. PA6-PA7 are free and PA8-PA15 stay with `init()`, which needs PA15
-/// to hand to `disable_jtag()` — that is what frees PB3 for the calibration
-/// input. Nothing else on this board uses PA0-PA5: LED is PC13, PPS is PB1,
+/// to hand to `disable_jtag()` — that frees PB3 for the calibration input.
+/// Nothing else on this board uses PA0-PA5: LED is PC13 or PB2, PPS is PB1,
 /// GPS is PB10/PB11. A backend wanting more pins takes PA6/PA7 by adding them
 /// back here; one needing a pin outside CRL is the signal to move the whole pin
 /// map into one cfg-aware board module rather than to grow this struct.
