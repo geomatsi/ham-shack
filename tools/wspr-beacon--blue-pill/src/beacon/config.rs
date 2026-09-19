@@ -34,6 +34,7 @@ pub const CFG: Config = Config {
         },
     },
     hw: Hw {
+        model: BluePill::Plus,
         mcu: Mcu {
             crystal_mhz: 8,
             sysclk_mhz: 32,
@@ -164,9 +165,19 @@ impl Band {
 /// Board-level configuration.
 #[derive(Debug, Clone, Copy)]
 pub struct Hw {
+    pub model: BluePill,
     pub mcu: Mcu,
     pub gps: Gps,
     pub rf: Rf,
+}
+
+/// Blue Pill variant, for now just selects LED pin.
+#[derive(Debug, Clone, Copy)]
+pub enum BluePill {
+    /// Classic Blue Pill: https://stm32-base.org/boards/STM32F103C8T6-Blue-Pill.html
+    Classic,
+    /// Blue Pill Plus by WeAct: https://stm32-base.org/boards/STM32F103C8T6-WeAct-Blue-Pill-Plus-Clone.html
+    Plus,
 }
 
 /// MCU and clock tree.
