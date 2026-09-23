@@ -23,7 +23,7 @@ pub const CFG: Config = Config {
         callsign: "R1BRL",
         bands: BANDS,
         band: 3, // 20m
-        pwr: 27,
+        pwr: 23,
         tx_period_min: 10,
     },
     sw: Sw {
@@ -51,7 +51,7 @@ pub const CFG: Config = Config {
             nominal: Frequency::from_hz(10_000_000),
             pll: PLL::A,
             pll_parked: Frequency::from_hz(62 * 14_097_100),
-            drive: DriveStrength::_8mA,
+            drive: DriveStrength::_2mA,
         },
     },
 };
