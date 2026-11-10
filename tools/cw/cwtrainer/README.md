@@ -86,3 +86,13 @@ an optional probability: `--partial` activator sends `R3?`, `--busted` copies
 your call wrong, `--pileup` works another hunter first (call again after
 `QRZ`), `--agn` asks for your report again. `--log` adds a step after each
 QSO: send the activator's call and park as you logged them.
+
+## Groups
+
+```
+cwtrainer --device /dev/input/eventX groups [--charset letters|digits|mix]
+          [--size 5 | --size 1-6] [--per-prompt 1] [--listen] [--count 20]
+```
+
+LCWO-style random groups: send back each group. `--size LO-HI` draws each
+group's length at random; `--per-prompt` puts several groups in one prompt.
