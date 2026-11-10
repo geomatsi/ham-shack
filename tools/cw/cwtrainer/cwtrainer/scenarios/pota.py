@@ -34,7 +34,8 @@ class Step(Enum):
 
 
 @dataclass
-class Hunter:
+class Station:
+    """A simulated operator."""
     call: str
     wpm: float
     tone_offset: float
@@ -101,8 +102,8 @@ class Pota:
         self.gen = CallsignGenerator(self.rng)
 
         self.step = Step.CQ
-        self.queue: list[Hunter] = []        # waiting to be worked
-        self.calling: list[Hunter] = []      # heard in the current over
+        self.queue: list[Station] = []       # waiting to be worked
+        self.calling: list[Station] = []     # heard in the current over
         self.voices: list[Voice] = []        # what the next prompt plays
         self.instruction: str | None = "Call CQ"
         self.fragment = ""
@@ -246,12 +247,12 @@ class Pota:
             return 0
         return self.rng.randint(1, 3)
 
-    def _hunter(self) -> Hunter:
+    def _hunter(self) -> Station:
         lo, hi = self.hunter_wpm
-        h = Hunter(self.gen.generate(), round(self.rng.uniform(lo, hi)),
+        h = Station(self.gen.generate(), round(self.rng.uniform(lo, hi)),
                    round(self.rng.uniform(-TONE_SPREAD, TONE_SPREAD)))
         if self.rng.random() < self.realism.p2p:
-            h.park = f"{self.rng.choice(PARK_PREFIXES)}-{self.rng.randint(1, 9999):04d}"
+            h.park = random_park(self.rng)
         return h
 
     def _call_next(self) -> None:
@@ -274,6 +275,10 @@ class Pota:
             self.voices = [h.voice(self.fragment)]
         else:
             self.voices = [h.voice(h.call)]
+
+
+def random_park(rng: random.Random) -> str:
+    return f"{rng.choice(PARK_PREFIXES)}-{rng.randint(1, 9999):04d}"
 
 
 def partial_call(call: str, rng: random.Random) -> str:
