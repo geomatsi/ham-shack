@@ -28,3 +28,6 @@ Choices made where `PLAN.md` was open or ambiguous.
   so far.
 - Stats are saved after every prompt; the in-progress session is included so
   a crash loses nothing.
+- Callsign difficulty levels: 1 = 1x2/2x1, 2 = +1x3/2x2, 3 = +2x3,
+  4 = +digit prefixes, 5 = +portable suffixes. Without `--ramp` everything is
+  level 5. Area digit is any 0-9 regardless of country.
