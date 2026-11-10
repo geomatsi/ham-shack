@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cwtrainer"
+version = "0.1.0"
+description = "CW sending trainer for an iambic paddle"
+requires-python = ">=3.11"
+dependencies = ["numpy", "sounddevice", "evdev"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+cwtrainer = "cwtrainer.main:main"
+
+[tool.setuptools.packages.find]
+include = ["cwtrainer*"]
+
+[tool.setuptools.package-data]
+cwtrainer = ["data/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
