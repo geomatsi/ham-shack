@@ -20,3 +20,11 @@ Choices made where `PLAN.md` was open or ambiguous.
 - Decoder thresholds are in units of the keyer WPM, so a user who sends with
   Farnsworth-wide gaps gets spurious word breaks. Fine for now; an adaptive
   decoder can track the user's actual spacing later.
+- Echo prompts are 60% phrases, 40% one or two random words; no immediate
+  repeats. Answers are exact-match for "ok" with a 0..1 score for partials.
+- Keying during prompt playback cuts the playback; the keying counts as the
+  answer.
+- Replay always plays audio, also in `--show` mode, and discards what was sent
+  so far.
+- Stats are saved after every prompt; the in-progress session is included so
+  a crash loses nothing.

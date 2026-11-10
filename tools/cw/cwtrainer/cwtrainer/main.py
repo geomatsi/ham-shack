@@ -13,6 +13,7 @@ from cwtrainer.keyer import KeyEvent
 from cwtrainer.decoder import Decoder
 from cwtrainer.paddle import ButtonEvent, InputClosed
 from cwtrainer.rig import Rig
+from cwtrainer.scenarios import SCENARIOS
 
 
 def volume(s: str) -> float:
@@ -38,14 +39,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rise", type=float, default=d.rise_time * 1000, help="envelope rise/fall in ms")
     p.add_argument("--answer-timeout", type=float, default=d.answer_timeout,
                    help=f"silence that ends an answer, seconds (default {d.answer_timeout})")
-    p.add_subparsers(dest="scenario", metavar="SCENARIO")
+    p.add_argument("--stats", type=Path, default=d.stats_path, help=f"stats file (default {d.stats_path})")
+    sub = p.add_subparsers(dest="scenario", metavar="SCENARIO")
+    for name, factory in SCENARIOS.items():
+        factory.add_arguments(sub.add_parser(name, help=factory.help))
     return p
 
 
 def config_from_args(args: argparse.Namespace) -> Config:
     return Config(wpm=args.wpm, tone=args.tone, volume=args.volume, mode=args.mode, swap=args.swap,
                   device=args.device, samplerate=args.samplerate, rise_time=args.rise / 1000,
-                  answer_timeout=args.answer_timeout)
+                  answer_timeout=args.answer_timeout, stats_path=args.stats)
 
 
 def open_rig(cfg: Config) -> Rig:
@@ -90,11 +94,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if cfg.device is None or not Path(cfg.device).exists():
         parser.error(f"paddle device not found: {cfg.device}; pass --device /dev/input/eventX")
-    try:
-        with open_rig(cfg) as rig:
-            run_keyer_only(rig)
-    except KeyboardInterrupt:
-        print()
+    if args.keyer_only:
+        try:
+            with open_rig(cfg) as rig:
+                run_keyer_only(rig)
+        except KeyboardInterrupt:
+            print()
+        return 0
+    return run_scenario(cfg, args)
+
+
+def run_scenario(cfg: Config, args: argparse.Namespace) -> int:
+    from cwtrainer.player import MorsePlayer
+    from cwtrainer.session import Keyboard, SessionUI
+    from cwtrainer.stats import Stats
+
+    scenario = SCENARIOS[args.scenario].from_args(args, cfg)
+    stats = Stats(cfg.stats_path)
+    with open_rig(cfg) as rig, Keyboard(rig.events.put):
+        print("Enter, space or the adapter button replays the prompt; q or Ctrl+C quits.")
+        player = MorsePlayer(rig.audio, cfg.samplerate, cfg.volume, cfg.rise_time)
+        SessionUI(rig, scenario, player, stats, make_decoder(cfg)).run()
     return 0
 
 
