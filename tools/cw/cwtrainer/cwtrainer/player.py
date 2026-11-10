@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from cwtrainer.morse import timeline
+from cwtrainer.scenarios.base import Voice
 from cwtrainer.sidetone import AudioSink, ToneGenerator
 
 
@@ -38,3 +39,16 @@ class MorsePlayer:
         buf = render(text, wpm, tone, self.volume, self.samplerate, self.rise_time, effective_wpm)
         self.audio.play(buf)
         return len(buf) / self.samplerate
+
+    def play_voices(self, voices: list[Voice], wpm: float, tone: float) -> float:
+        """Mix voices into one playback; returns its length in seconds."""
+        bufs = [(round(v.delay * self.samplerate),
+                 render(v.text, v.wpm or wpm, tone + v.tone_offset, self.volume,
+                        self.samplerate, self.rise_time)) for v in voices]
+        if not bufs:
+            return 0.0
+        out = np.zeros(max(start + len(b) for start, b in bufs), dtype=np.float32)
+        for start, b in bufs:
+            out[start:start + len(b)] += b
+        self.audio.play(out)
+        return len(out) / self.samplerate

@@ -76,19 +76,23 @@ class SessionUI:
         self.dec = decoder
         self.results: list[Result] = []
 
+    @staticmethod
+    def label(p: Prompt) -> str:
+        text = p.text if p.show_text else "(listen)" if p.play_audio and p.audio() else ""
+        return ": ".join(s for s in (p.instruction, text) if s)
+
     def present(self, n: int, p: Prompt) -> None:
-        label = p.text if p.show_text else "(listen)"
-        print(f"\n#{n}  {label}")
+        print(f"\n#{n}  {self.label(p)}")
         if p.play_audio:
             self.play(p)
         print("  > ", end="", flush=True)
 
     def play(self, p: Prompt) -> None:
-        self.player.play(p.text, p.wpm or self.cfg.wpm, self.cfg.tone)
+        self.player.play_voices(p.audio(), p.wpm or self.cfg.wpm, self.cfg.tone)
 
     def replay(self, p: Prompt) -> None:
         self.dec.reset()
-        print("  (replay)" if not p.show_text else f"  (replay) {p.text}")
+        print(f"  (replay) {self.label(p)}")
         self.play(p)
         print("  > ", end="", flush=True)
 
@@ -122,9 +126,9 @@ class SessionUI:
     def show(self, r: Result, p: Prompt) -> None:
         mark = "✓" if r.ok else "✗"
         print(f"  {mark} {r.score:4.0%}", end="")
-        if not r.ok:
-            if not p.show_text:
-                print(f"  expected: {r.expected}", end="")
+        if not r.ok and r.reveal and not p.show_text:
+            print(f"  expected: {r.expected}", end="")
+        if r.notes:
             print(f"  ({', '.join(r.notes)})", end="")
         print()
 
@@ -157,6 +161,8 @@ class SessionUI:
         if s is None or not s.prompts:
             return
         print(f"\n{s.prompts} prompts, {s.perfect} perfect, average {s.score:.0%} at {s.wpm} WPM")
+        for line in getattr(self.scenario, "summary", list)():
+            print(line)
         weak = self.stats.weak_characters(5, min_attempts=1, session_only=True)
         if weak:
             print("weak this session: " + " ".join(weak))

@@ -46,3 +46,23 @@ Echo with generated callsigns: 1x2 to 2x3 patterns on real prefixes, sometimes
 a digit prefix (`9A`, `S5`, `--digit-prefix`) or a `/P` `/M` `/QRP` suffix
 (`--portable`). `--ramp` starts with short calls and moves up a level when
 the last 5 average 95%, down below 60%.
+
+## POTA activator
+
+```
+cwtrainer --device /dev/input/eventX pota --mycall R3XYZ [--park OH-0001] [--show]
+          [--agn] [--partial] [--pileup] [--p2p] [--hunter-wpm 18-25]
+```
+
+1. Call CQ: must contain `CQ` and your call.
+2. A hunter (or none) calls, at its own speed and tone (±100 Hz).
+3. Send `<HCALL> 5NN`. A miscopied call makes the hunter repeat it; a missing
+   RST gets `AGN?`. Sending `?` or `AGN` asks for a repeat.
+4. Hunter acknowledges; sign off with `TU`, `73` or `QRZ`.
+5. Next caller, or call CQ again.
+
+Realism flags take an optional probability: `--agn` hunter missed your
+exchange, `--partial` only part of the call is heard (send `<PART>?`),
+`--pileup` two hunters at once (work either), `--p2p` hunter sends its park,
+which you must send back. Hunter text stays hidden unless `--show`; the
+summary gives QSO count, accuracy and time per QSO.

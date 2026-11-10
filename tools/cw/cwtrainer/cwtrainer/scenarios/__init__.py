@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cwtrainer.scenarios.base import Prompt, Result, Scenario, ScenarioFactory
+from cwtrainer.scenarios.base import Prompt, Result, Scenario, ScenarioFactory, Voice
 
 SCENARIOS: dict[str, ScenarioFactory] = {}
 
@@ -12,6 +12,6 @@ def register(cls):
     return cls
 
 
-from cwtrainer.scenarios import callsigns, echo  # noqa: E402,F401  (register themselves)
+from cwtrainer.scenarios import callsigns, echo, pota  # noqa: E402,F401  (register themselves)
 
-__all__ = ["SCENARIOS", "Prompt", "Result", "Scenario", "register"]
+__all__ = ["SCENARIOS", "Prompt", "Result", "Scenario", "Voice", "register"]

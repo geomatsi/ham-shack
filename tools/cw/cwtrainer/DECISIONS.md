@@ -31,3 +31,17 @@ Choices made where `PLAN.md` was open or ambiguous.
 - Callsign difficulty levels: 1 = 1x2/2x1, 2 = +1x3/2x2, 3 = +2x3,
   4 = +digit prefixes, 5 = +portable suffixes. Without `--ramp` everything is
   level 5. Area digit is any 0-9 regardless of country.
+- `-` added to the Morse table for park references (`OH-0001`).
+- POTA grades loosely: the required tokens (CQ, calls, park) are matched
+  against the closest sent word; anything else in the over is ignored.
+  RST is any `[1-5][1-9N][1-9N]`.
+- A miscopied hunter call is never revealed; the hunter repeats it. `AGN?`
+  happens at most once per QSO.
+- A wrong sign-off (or missing P2P park) is marked wrong but the QSO is still
+  logged: the hunter has gone and won't repeat.
+- Repeat requests (`?`, `AGN`, `RPT`, `QRZ?`) are not graded.
+- A CQ gets 1-3 callers, none with probability 0.1.
+- `--park` is not checked anywhere yet; it's accepted in the exchange like any
+  other extra text.
+- `Prompt` gained `instruction` and `voices`, `Result` gained `reveal`; all
+  default to the old behaviour. Scenarios may define `summary()`.

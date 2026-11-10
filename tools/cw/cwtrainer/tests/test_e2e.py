@@ -54,3 +54,13 @@ def test_session_live(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "2 prompts, 2 perfect" in out
     assert Stats(tmp_path / "s.json").sessions[0]["prompts"] == 2
+
+
+def test_session_labels():
+    from cwtrainer.scenarios.base import Prompt, Voice
+
+    assert SessionUI.label(Prompt("CQ", True, False)) == "CQ"
+    assert SessionUI.label(Prompt("CQ", False, True)) == "(listen)"
+    assert SessionUI.label(Prompt("", False, False, instruction="Call CQ")) == "Call CQ"
+    p = Prompt("OH2AB", True, True, instruction="Hunter", voices=[Voice("OH2AB")])
+    assert SessionUI.label(p) == "Hunter: OH2AB"
