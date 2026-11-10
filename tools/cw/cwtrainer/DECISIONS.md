@@ -17,3 +17,6 @@ Choices made where `PLAN.md` was open or ambiguous.
   (exit there with Ctrl+C or `q`). The adapter reports it as relative motion,
   so there is no press duration to distinguish long/short presses; repeats
   within 0.3 s are dropped.
+- Decoder thresholds are in units of the keyer WPM, so a user who sends with
+  Farnsworth-wide gaps gets spurious word breaks. Fine for now; an adaptive
+  decoder can track the user's actual spacing later.

@@ -10,7 +10,7 @@ from pathlib import Path
 from cwtrainer import __version__
 from cwtrainer.config import Config, KeyerMode
 from cwtrainer.keyer import KeyEvent
-from cwtrainer.morse import Element
+from cwtrainer.decoder import Decoder
 from cwtrainer.paddle import ButtonEvent, InputClosed
 from cwtrainer.rig import Rig
 
@@ -56,24 +56,28 @@ def open_rig(cfg: Config) -> Rig:
     return Rig(cfg, paddle, Sidetone(cfg))
 
 
+def make_decoder(cfg: Config) -> Decoder:
+    return Decoder(cfg.wpm, cfg.char_gap, cfg.word_gap, cfg.answer_timeout)
+
+
 def run_keyer_only(rig: Rig) -> None:
     print("Keyer ready. Adapter button or Ctrl+C exits.")
-    last_up: float | None = None
+    dec = make_decoder(rig.cfg)
     while True:
-        ev = rig.get(timeout=0.1)
-        if isinstance(ev, (ButtonEvent, InputClosed)):
-            if isinstance(ev, InputClosed):
-                print(f"\ninput closed: {ev.reason}")
+        ev = rig.get(timeout=0.05)
+        if isinstance(ev, InputClosed):
+            print(f"\ninput closed: {ev.reason}")
+            break
+        if isinstance(ev, ButtonEvent):
             break
         if isinstance(ev, KeyEvent):
-            if ev.down:
-                last_up = None
-                print("." if ev.element is Element.DIT else "-", end="", flush=True)
-            else:
-                last_up = ev.t
-        elif last_up is not None and rig.clock.now() - last_up > rig.cfg.answer_timeout:
+            print(dec.feed(ev), end="", flush=True)
+            continue
+        now = rig.clock.now()
+        print(dec.poll(now), end="", flush=True)
+        if dec.answer_complete(now):
             print()
-            last_up = None
+            dec.reset()
     print()
 
 
