@@ -1,0 +1,292 @@
+# CW Trainer — Implementation Plan
+
+> **Status (2026-11-11):** milestones 1–7 done. Beyond the plan: `pota-hunter`
+> and `groups` scenarios. Deviations and open choices are in `DECISIONS.md`.
+> The prototype `keyer.py` now lives one level up, in `tools/cw/`.
+
+This plan is written for a coding agent. Work milestone by milestone, keep every
+milestone shippable, and stop at each **Human check** so the owner can verify
+behaviour on real hardware.
+
+---
+
+## 1. Context
+
+The owner has a working prototype, `keyer.py`, that:
+
+- reads an iambic paddle through a vBand USB adapter on Linux via `evdev`
+  (the adapter appears as mouse buttons: `BTN_LEFT` = dit, `BTN_RIGHT` = dah;
+  the adapter's own button produces an `EV_REL` event with code 1),
+- runs a simple iambic-A keyer in a thread,
+- plays a sidetone with `sounddevice` (`sd.play()` per element).
+
+Goal: turn it into an extensible **CW sending trainer** with pluggable practice
+scenarios, starting with **Echo**, **Callsigns**, and **POTA activator**.
+
+Keep `keyer.py` untouched as a reference until Milestone 3 replaces it.
+
+## 2. Goals and non-goals
+
+**Goals**
+- Responsive, click-free sidetone with low latency (target < 20 ms).
+- Correct iambic keying (modes A and B, element memory).
+- Decode what the user sends, using timestamps.
+- Scenario framework that makes new scenarios cheap to add.
+- Per-character error statistics.
+- All logic testable without the paddle or a sound card.
+
+**Non-goals (for now)**
+- GUI (terminal UI only).
+- Windows/macOS input support (Linux `evdev` only; keep input behind an interface).
+- Straight-key or bug support (design should not prevent it later).
+- Contest simulator (later; reuses POTA machinery).
+
+## 3. Tech constraints
+
+- Python 3.11+, `numpy`, `sounddevice`, `evdev`; `pytest` for tests.
+- No other heavy dependencies without asking.
+- Package layout with `pyproject.toml`; entry point `cwtrainer`.
+- Type hints everywhere; dataclasses / enums instead of string constants.
+
+## 4. Known problems in the prototype (must be fixed by the new design)
+
+1. **Exit-by-rattle bug:** five consecutive presses of one paddle exits the
+   program, which fires when sending `5`, `5NN`, `HH`. Remove it; exit only via
+   the adapter button or Ctrl+C.
+2. **Busy loop:** the audio thread spins on `get_nowait()` when idle (100% CPU).
+3. **Lost taps:** paddle state is only read between elements, so a short tap
+   during an element is lost. Needs element memory.
+4. **Wrong squeeze start:** alternation resets to dit when idle, so a squeeze that
+   begins on the dah paddle may start with a dit.
+5. **Alternation not updated** after single-paddle elements.
+6. **`sd.play()` per element:** adds latency and jitter; bare sine causes key clicks.
+7. **No timing record:** key-down/up timestamps are discarded, so nothing can be
+   decoded or graded.
+8. `--volume` is an int defaulting to full scale; `isi` unused; typos.
+
+## 5. Architecture
+
+Pipeline:
+
+```
+PaddleSource → Keyer → KeyEvents (timestamped key down/up + element)
+                          ├─→ Sidetone (audio)
+                          └─→ Decoder → text → Scenario.check() → Result → Stats
+Scenario.next_prompt() → Prompt (text and/or audio via MorsePlayer)
+```
+
+Package layout:
+
+```
+cwtrainer/
+  __init__.py
+  main.py          # CLI, wiring, session loop
+  config.py        # dataclass config (wpm, tone, volume, keyer mode, device...)
+  clock.py         # Clock protocol; MonotonicClock and FakeClock (tests)
+  paddle.py        # PaddleEvent; EvdevPaddle; ReplayPaddle (from file/list)
+  keyer.py         # IambicKeyer state machine (pure logic)
+  sidetone.py      # Sidetone with persistent OutputStream; NullSidetone
+  morse.py         # code table, timing, text→elements, elements→text
+  decoder.py       # KeyEvents → characters/words; answer-end detection
+  player.py        # MorsePlayer: renders text to audio for prompts
+  grading.py       # normalisation, edit distance, error handling (<HH>)
+  stats.py         # per-character stats, persisted as JSON
+  scenarios/
+    __init__.py    # registry
+    base.py        # Scenario, Prompt, Result
+    echo.py
+    callsigns.py
+    pota.py
+  data/
+    phrases.txt
+tests/
+```
+
+### 5.1 Core types (sketch, adjust as needed)
+
+```python
+class Side(Enum): DIT = 1; DAH = 2
+@dataclass(frozen=True)
+class PaddleEvent: side: Side; pressed: bool; t: float
+
+class Element(Enum): DIT = 1; DAH = 2
+@dataclass(frozen=True)
+class KeyEvent: down: bool; t: float; element: Element | None  # element set on key-down
+
+@dataclass
+class Prompt: text: str; show_text: bool; play_audio: bool; wpm: int | None = None
+@dataclass
+class Result: ok: bool; expected: str; sent: str; score: float; notes: list[str]
+
+class Scenario(Protocol):
+    name: str
+    def next_prompt(self) -> Prompt: ...
+    def check(self, sent: str) -> Result: ...
+    def done(self) -> bool: ...
+```
+
+### 5.2 Timing
+
+- `unit = 1.2 / wpm` seconds (PARIS).
+- Dit = 1 unit on, dah = 3 units on, inter-element gap = 1 unit (generated by keyer).
+- Decoder thresholds (configurable, in units of the user's WPM):
+  character break ≥ 2.0, word break ≥ 5.0, end of answer ≥ 1.5 s of silence
+  (configurable; also allow ending with a dedicated adapter button).
+
+## 6. Component specs
+
+### 6.1 Clock
+`Clock` protocol with `now()` and `sleep_until(t)`. `FakeClock` lets tests advance
+time deterministically. The keyer must never call `time` directly.
+
+### 6.2 Paddle input
+- `EvdevPaddle(device, dit_code, dah_code, exit_code)` — key codes configurable,
+  defaults `BTN_LEFT`, `BTN_RIGHT`; grabs the device; emits `PaddleEvent`s with
+  `clock.now()` timestamps; emits an exit signal for the adapter button.
+- Optional `--swap` to swap paddles.
+- `ReplayPaddle` takes a list of `(t, side, pressed)` for tests and demos.
+
+### 6.3 Keyer (most important; test thoroughly)
+State machine driven by paddle events and time:
+- Track which paddles are currently down and the order they went down.
+- **Element memory:** if the opposite paddle is pressed at any time during an
+  element (even if released before it ends), latch it and send that element next.
+- **Squeeze:** alternate elements; the first element is the paddle pressed first.
+- After any element, the next squeeze element is the opposite of the last one sent.
+- **Mode A:** when both paddles are released, finish the current element and stop
+  (plus any latched memory element).
+- **Mode B:** if both paddles were squeezed during the current element and are
+  released, send one additional opposite element.
+- Emits `KeyEvent`s with exact timestamps (on/off per element).
+- Runs in its own thread: block on the event queue with a timeout equal to the
+  time until the next element boundary; never spin.
+- Pure logic class + thin threaded runner, so the logic is testable with `FakeClock`.
+
+### 6.4 Sidetone
+- One persistent `sounddevice.OutputStream` with a callback, small blocksize
+  (64–256 frames), `latency="low"`.
+- Shared key state; callback generates a continuous-phase sine and applies a
+  raised-cosine envelope (~5 ms rise/fall, configurable) on key transitions.
+- Volume as float 0–1, tone frequency configurable.
+- `NullSidetone` for tests/headless runs.
+
+### 6.5 Morse table and player
+- Letters, digits, common punctuation (`/ ? . , =`), and prosigns written in angle
+  brackets: `<AR> <SK> <KN> <BT> <HH>`.
+- `text_to_elements(text)` and `elements_to_char(seq)`.
+- `MorsePlayer.play(text, wpm, tone)` renders with the same envelope; supports
+  Farnsworth spacing later (leave a parameter).
+
+### 6.6 Decoder
+- Consumes `KeyEvent`s; groups elements into characters and words by the gap
+  thresholds in 5.2; emits text incrementally (so the UI can show it live).
+- Unknown sequences become `*`.
+- Error signal: 6 or more consecutive dits in one character → `<HH>` token.
+- `answer_complete` fires after the end-of-answer silence.
+
+### 6.7 Grading
+- Normalise: uppercase, collapse whitespace, treat `5NN`/`599` as equivalent
+  where a scenario allows it.
+- Apply `<HH>`: delete the preceding word (or character run) before comparing.
+- Score with character-level edit distance; report which characters were wrong
+  and feed them to `Stats`.
+
+### 6.8 Stats
+- Per-character attempts/errors, per-session WPM and score.
+- Persist to `~/.local/share/cwtrainer/stats.json`.
+- `weak_characters(n)` for future adaptive drills.
+
+## 7. Scenarios
+
+### 7.1 Echo
+- Source: `data/phrases.txt` (one per line; QSO phrases like `CQ CQ CQ`,
+  `TNX FER UR CALL`, `UR RST 599`, `NAME IS`, `73 ES GL`) plus random words.
+- Modes: `--show` (text shown), `--listen` (audio only), `--both`.
+- Prompt → user sends → grade → show result (expected vs sent, mistakes) → next.
+- Option to replay the prompt (adapter button or Enter).
+
+### 7.2 Callsigns
+- Echo with a callsign generator instead of phrases.
+- Generator uses realistic patterns: 1×2, 1×3, 2×1, 2×2, 2×3 (prefix letters ×
+  suffix letters), real-looking prefixes (e.g. `OH`, `SM`, `DL`, `G`, `K`, `W`,
+  `R`, `UA`, `JA`, `VK`), occasional digits-in-prefix forms, and optional
+  `/P`, `/M`, `/QRP` suffixes (configurable probability).
+- Optional difficulty ramp: longer/harder calls as accuracy improves.
+
+### 7.3 POTA activator
+User is the activator (`--mycall`, `--park` e.g. `OH-0001`). Loop:
+
+1. User sends `CQ POTA DE <MYCALL> K` (graded loosely: must contain `CQ` and MYCALL).
+2. Simulated hunter replies with its callsign (played audio; random WPM in a range,
+   random tone offset ±100 Hz).
+3. User sends `<HCALL> 5NN` (must contain the full hunter call and an RST;
+   optional state/park info allowed).
+4. Hunter replies `R 5NN TU` or `TU 73`; user sends `TU` / `73` / `QRZ`.
+5. Next hunter, or user sends CQ again.
+
+Realism options (configurable, add progressively):
+- Hunter sends `AGN?` or `?` if the user's call copy was wrong → user must resend.
+- Partial callsign: hunter sends only part, user sends `<PARTIAL>?`.
+- Two hunters at once (mixed audio, different tones/speeds).
+- Park-to-park caller sending its own park reference.
+
+Session summary: QSO count, accuracy, average time per QSO.
+
+## 8. CLI
+
+```
+cwtrainer --device /dev/input/eventX echo --listen
+cwtrainer callsigns --count 20
+cwtrainer pota --mycall R3XYZ --park OH-0001
+```
+
+Global options: `--wpm`, `--tone`, `--volume`, `--mode {A,B}`, `--swap`,
+`--keyer-only` (just a practice keyer with live decoded text).
+
+## 9. Milestones
+
+Each milestone: code + tests + short README update.
+
+1. **Skeleton:** package, `pyproject.toml`, config, CLI stub, `Clock`, Morse table,
+   `pytest` running. *Done when:* `pytest` passes; `cwtrainer --help` works.
+2. **Keyer logic:** `IambicKeyer` with `FakeClock`. Tests for: single dit/dah hold,
+   squeeze starting on either paddle, short tap during element (memory), mode A
+   vs mode B release behaviour, no CPU spin (runner blocks). *Done when:* all keyer
+   tests pass.
+3. **Sidetone + evdev:** persistent-stream sidetone with envelope; `EvdevPaddle`;
+   `--keyer-only` mode replacing the prototype. Fix all items in section 4.
+   **Human check:** feel, latency, clicks, squeeze behaviour on real paddle.
+4. **Decoder + live text:** decode `KeyEvent`s; show live text in `--keyer-only`.
+   Tests with synthetic event streams at several WPM, including `<HH>`.
+   **Human check:** sending text decodes correctly at the owner's speed.
+5. **Scenario framework + Echo:** base classes, registry, grading, stats, `echo`
+   in show/listen/both modes, `MorsePlayer`. **Human check.**
+6. **Callsigns:** generator + scenario. Tests for generator patterns.
+7. **POTA:** state machine, simulated hunters, basic flow (steps 1–5), then add
+   realism options one by one behind flags. **Human check.**
+
+## 10. Testing strategy
+
+- All logic (keyer, decoder, grading, scenarios, generators) runs headless with
+  `FakeClock`, `ReplayPaddle`, `NullSidetone`.
+- Scenarios are tested by feeding decoded text directly to `check()`.
+- End-to-end test: `ReplayPaddle` → keyer → decoder → scenario, asserting the
+  decoded answer and grade.
+- Audio and evdev are verified only at **Human check** points; the agent cannot
+  hear audio or press paddles.
+
+## 11. Conventions for the agent
+
+- Small, reviewable commits per milestone step.
+- Do not change public interfaces of finished milestones without noting why.
+- Keep configuration defaults sensible: 20 WPM, 600 Hz, volume 0.5, mode A.
+- If a requirement is ambiguous, choose the simplest reasonable option, note it
+  in `docs/DECISIONS.md`, and continue.
+
+## 12. Open questions for the owner
+
+- Default keyer mode: A or B?
+- Should the adapter button mean "exit", "replay prompt", or "end answer"
+  (long press vs short press)?
+- Preferred stats location and whether to keep history per session.
+- POTA exchange conventions to accept (e.g. `5NN` only, or also state/region).

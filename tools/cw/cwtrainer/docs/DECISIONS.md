@@ -53,3 +53,15 @@ Choices made where `PLAN.md` was open or ambiguous.
   default.
 - The activator's sign-off and the next CQ are mixed into one prompt rather
   than asking the user to acknowledge.
+
+## Open: sidetone latency (postponed 2026-11-11)
+
+Extra dots while sending. Measured without the paddle: keyer thread lag
+< 1 ms, so not CPU or priority. Output through ALSA `default` -> PulseAudio
+is ~50 ms to the DAC (PortAudio's reported 10.7 ms is only its own buffer);
+`hw:0,0` direct is ~12 ms. Late sidetone makes the operator release late, so
+the keyer sees the paddle held at gap end and adds a dit. Callbacks also come
+in ~9 ms bursts, jittering element edges. Wireless headphones add more.
+
+Possible fixes: `--audio-device` for direct ALSA hw; key edges scheduled by
+timestamp in the audio callback; a `--debug-timing` log to confirm the cause.
