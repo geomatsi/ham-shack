@@ -10,3 +10,12 @@ pip install -e '.[test]'
 pytest
 cwtrainer --help
 ```
+
+## Practice keyer
+
+```
+cwtrainer --device /dev/input/eventX --keyer-only [--wpm 22] [--mode B] [--swap]
+```
+
+The vBand adapter shows up as two `HID 413d:2107` nodes; use the one with
+`BTN_LEFT`/`BTN_RIGHT`. The adapter button or Ctrl+C exits.

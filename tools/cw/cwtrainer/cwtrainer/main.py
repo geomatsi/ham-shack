@@ -5,9 +5,14 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from cwtrainer import __version__
 from cwtrainer.config import Config, KeyerMode
+from cwtrainer.keyer import KeyEvent
+from cwtrainer.morse import Element
+from cwtrainer.paddle import ButtonEvent, InputClosed
+from cwtrainer.rig import Rig
 
 
 def volume(s: str) -> float:
@@ -43,11 +48,49 @@ def config_from_args(args: argparse.Namespace) -> Config:
                   answer_timeout=args.answer_timeout)
 
 
+def open_rig(cfg: Config) -> Rig:
+    from cwtrainer.paddle import EvdevPaddle
+    from cwtrainer.sidetone import Sidetone
+
+    paddle = EvdevPaddle(cfg.device, swap=cfg.swap)
+    return Rig(cfg, paddle, Sidetone(cfg))
+
+
+def run_keyer_only(rig: Rig) -> None:
+    print("Keyer ready. Adapter button or Ctrl+C exits.")
+    last_up: float | None = None
+    while True:
+        ev = rig.get(timeout=0.1)
+        if isinstance(ev, (ButtonEvent, InputClosed)):
+            if isinstance(ev, InputClosed):
+                print(f"\ninput closed: {ev.reason}")
+            break
+        if isinstance(ev, KeyEvent):
+            if ev.down:
+                last_up = None
+                print("." if ev.element is Element.DIT else "-", end="", flush=True)
+            else:
+                last_up = ev.t
+        elif last_up is not None and rig.clock.now() - last_up > rig.cfg.answer_timeout:
+            print()
+            last_up = None
+    print()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    config_from_args(args)
-    parser.print_help()
+    cfg = config_from_args(args)
+    if not args.keyer_only and args.scenario is None:
+        parser.print_help()
+        return 0
+    if cfg.device is None or not Path(cfg.device).exists():
+        parser.error(f"paddle device not found: {cfg.device}; pass --device /dev/input/eventX")
+    try:
+        with open_rig(cfg) as rig:
+            run_keyer_only(rig)
+    except KeyboardInterrupt:
+        print()
     return 0
 
 
