@@ -45,3 +45,11 @@ Choices made where `PLAN.md` was open or ambiguous.
   other extra text.
 - `Prompt` gained `instruction` and `voices`, `Result` gained `reveal`; all
   default to the old behaviour. Scenarios may define `summary()`.
+- POTA hunter: a call within edit distance 2 of yours is "answered as sent",
+  so a miskeyed call comes back busted and must be corrected; anything further
+  off gets `?`. Further-off answers aren't graded per character.
+- Each hunter realism event happens at most once per QSO. Activators send
+  their park in some CQ forms; with `--log` they always do. `--log` is off by
+  default.
+- The activator's sign-off and the next CQ are mixed into one prompt rather
+  than asking the user to acknowledge.

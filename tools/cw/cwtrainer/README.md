@@ -66,3 +66,23 @@ exchange, `--partial` only part of the call is heard (send `<PART>?`),
 `--pileup` two hunters at once (work either), `--p2p` hunter sends its park,
 which you must send back. Hunter text stays hidden unless `--show`; the
 summary gives QSO count, accuracy and time per QSO.
+
+## POTA hunter
+
+```
+cwtrainer --device /dev/input/eventX pota-hunter --mycall R3XYZ [--show] [--log]
+          [--agn] [--partial] [--busted] [--pileup] [--activator-wpm 18-25]
+```
+
+The other side of a POTA QSO: an activator calls CQ, at its own speed and tone.
+
+1. Send your call.
+2. Activator sends `<YOURCALL> 5NN`; send your report (`R 5NN TU`).
+3. Activator signs off and the next one calls CQ.
+
+If the activator sends your call wrong, send your call again; sending a report
+instead logs a busted QSO. `?` or `AGN` asks for a repeat. Realism flags take
+an optional probability: `--partial` activator sends `R3?`, `--busted` copies
+your call wrong, `--pileup` works another hunter first (call again after
+`QRZ`), `--agn` asks for your report again. `--log` adds a step after each
+QSO: send the activator's call and park as you logged them.
