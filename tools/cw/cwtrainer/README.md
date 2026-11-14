@@ -101,6 +101,15 @@ cwtrainer --device /dev/input/eventX groups [--charset letters|digits|mix]
 LCWO-style random groups: send back each group. `--size LO-HI` draws each
 group's length at random; `--per-prompt` puts several groups in one prompt.
 
+## Words
+
+```
+cwtrainer --device /dev/input/eventX words [--per-prompt N] [--listen] [--count 10]
+```
+
+Send back common English words (MorseNinja's Top 500), `--per-prompt` of them
+per prompt, no word repeated within a prompt.
+
 ## Sentences
 
 ```
