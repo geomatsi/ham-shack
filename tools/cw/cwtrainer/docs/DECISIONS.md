@@ -4,6 +4,7 @@ Choices made where `PLAN.md` was open or ambiguous.
 
 - `<BT>` and `=` share a code; the decoder emits `=`. Prosigns that collide with
   punctuation not in the table (`<AR>`/`+`, `<KN>`/`(`) decode as the prosign.
+  `<BK>` added later for the MorseNinja phrases; it decodes as `<BK>`, not `BK`.
 - Element memory latches only the opposite paddle, during the element or the
   gap after it. Latching the same paddle would turn contact bounce into extra
   elements.
