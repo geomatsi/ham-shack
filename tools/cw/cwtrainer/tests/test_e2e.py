@@ -24,8 +24,7 @@ def send(text, wpm):
 
 
 def test_paddle_to_grade():
-    e = Qso(["UR RST 599"], ["X"], rng=random.Random(0))
-    e.PHRASE_RATIO = 1.0
+    e = Qso(["UR RST 599"], rng=random.Random(0))
     e.next_prompt()
     assert send("UR RST 5NN", 22) == "UR RST 5NN"
     assert e.check(send("UR RST 5NN", 22)).ok
@@ -40,8 +39,7 @@ def test_session_live(tmp_path, capsys):
     script, end = paddle_script("TU 73", cfg.wpm, t0=0.1)
     second, _ = paddle_script("CQ", cfg.wpm, t0=end + 0.5)
     audio = NullSidetone()
-    qso = Qso(["TU 73", "CQ"], ["X"], PromptMode.BOTH, count=2, rng=random.Random(0))
-    qso.PHRASE_RATIO = 1.0
+    qso = Qso(["TU 73", "CQ"], PromptMode.BOTH, count=2, rng=random.Random(0))
     # make prompt order deterministic
     order = iter(["TU 73", "CQ"])
     qso._pick = lambda: next(order)

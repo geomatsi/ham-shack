@@ -21,13 +21,14 @@ Choices made where `PLAN.md` was open or ambiguous.
 - Decoder thresholds are in units of the keyer WPM, so a user who sends with
   Farnsworth-wide gaps gets spurious word breaks. Fine for now; an adaptive
   decoder can track the user's actual spacing later.
-- QSO prompts are 60% phrases, 40% one or two random words; no immediate
-  repeats. Answers are exact-match for "ok" with a 0..1 score for partials.
+- QSO prompts are phrases only, no immediate repeats; random words moved to
+  the `words` scenario. Answers are exact-match for "ok" with a 0..1 score
+  for partials.
 - `phrases.txt` adds MorseNinja's Common QSO Phrases (+Encore), Practice QSO
   (Complete One-Sided), Top 180 QSO Elements and Abbreviations: trailing ` =`
   stripped, deduped, templated lines capped (2 per call/RST template, 3 per
   practice-QSO template), `VVV` and single-word job fragments dropped. Single
-  elements are ~30% of lines. `words.txt` adds Top 500 Words.
+  elements are ~30% of lines. `words.txt` is Top 500 Words only.
 - The `echo` scenario was renamed `qso` (PLAN.md still says Echo).
   `scenarios/echo.py` keeps `EchoBase`, the prompt-and-send-back base the
   other drills share. Old stats sessions stay labelled `echo`.

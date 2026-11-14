@@ -34,7 +34,7 @@ six or more dits decode as `<HH>`, an unknown pattern as `*`.
 cwtrainer --device /dev/input/eventX qso [--show | --listen | --both] [--count 10]
 ```
 
-Send back each prompt, a QSO phrase or random words. The answer ends after
+Send back each prompt, a QSO phrase. The answer ends after
 `--answer-timeout` seconds of silence; it is graded by character edit distance
 (`5NN` counts as `599`, `<HH>` erases the word before it). Enter, space or the
 adapter button replays the prompt and restarts the answer; `q` or Ctrl+C ends

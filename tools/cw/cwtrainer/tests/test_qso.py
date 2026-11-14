@@ -11,23 +11,21 @@ def test_registered():
 
 
 def test_data_is_sendable():
-    for name in ("phrases.txt", "words.txt"):
-        lines = load_lines(name)
-        assert len(lines) > 20
-        for ln in lines:
-            text_to_elements(ln)
+    lines = load_lines("phrases.txt")
+    assert len(lines) > 20
+    for ln in lines:
+        text_to_elements(ln)
 
 
 def test_modes():
     for mode, show, play in [(PromptMode.SHOW, True, False), (PromptMode.LISTEN, False, True),
                              (PromptMode.BOTH, True, True)]:
-        p = Qso(["CQ CQ"], ["TU"], mode, rng=random.Random(1)).next_prompt()
+        p = Qso(["CQ CQ"], mode, rng=random.Random(1)).next_prompt()
         assert (p.show_text, p.play_audio) == (show, play)
 
 
 def test_count_and_check():
-    e = Qso(["UR RST 599"], ["UR"], count=2, rng=random.Random(0))
-    e.PHRASE_RATIO = 1.0
+    e = Qso(["UR RST 599"], count=2, rng=random.Random(0))
     assert not e.done()
     p = e.next_prompt()
     assert p.text == "UR RST 599"
@@ -39,14 +37,13 @@ def test_count_and_check():
 
 
 def test_endless():
-    e = Qso(["A", "B"], ["C"], count=0, rng=random.Random(0))
+    e = Qso(["A", "B"], count=0, rng=random.Random(0))
     for _ in range(50):
         e.next_prompt()
     assert not e.done()
 
 
 def test_no_immediate_repeat():
-    e = Qso(["A", "B"], ["C"], count=0, rng=random.Random(3))
-    e.PHRASE_RATIO = 1.0
+    e = Qso(["A", "B"], count=0, rng=random.Random(3))
     seq = [e.next_prompt().text for _ in range(30)]
     assert all(a != b for a, b in zip(seq, seq[1:]))
