@@ -100,3 +100,15 @@ cwtrainer --device /dev/input/eventX groups [--charset letters|digits|mix]
 
 LCWO-style random groups: send back each group. `--size LO-HI` draws each
 group's length at random; `--per-prompt` puts several groups in one prompt.
+
+## Sentences
+
+```
+cwtrainer --device /dev/input/eventX sentences [--level 1600] [--max-words N]
+          [--punct] [--listen] [--count 10]
+```
+
+Plain English, no QSO jargon: send back each sentence (MorseNinja
+"Sentences from Top N words"). `--level N` limits the vocabulary to the top N
+words (100-1600, steps of 100); `--max-words` skips longer sentences.
+Punctuation (`. , ?`) is stripped unless `--punct`.

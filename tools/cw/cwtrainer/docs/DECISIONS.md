@@ -70,6 +70,16 @@ Choices made where `PLAN.md` was open or ambiguous.
   ships automatically). setuptools left `cwtrainer.egg-info` in the tree on
   every editable install.
 
+## Sentences scenario (2026-11-15)
+
+- `data/sentences.txt` has one `# Top N words` section per MorseNinja file;
+  a sentence sits in the first (lowest) level it appears in, and `--level N`
+  takes every section up to N. Default is all 1600.
+- Punctuation is stripped by default: every sentence ends in `.` or `?`, which
+  would dominate the error stats. `--punct` keeps `. , ?`; `-` becomes a space.
+- `--max-words` is at least 3, so no level/limit combination leaves an empty
+  pool (the shortest top-100 sentences have 3 words).
+
 ## Open: sidetone latency (postponed 2026-11-11)
 
 Extra dots while sending. Measured without the paddle: keyer thread lag
