@@ -1,7 +1,8 @@
 # cwtrainer — working notes
 
 CW sending trainer: iambic paddle on a vBand USB adapter (evdev) -> keyer ->
-sidetone + decoder -> practice scenarios. Python 3.11+, numpy, sounddevice, evdev.
+sidetone + decoder -> practice scenarios. Python 3.12 via uv, numpy,
+sounddevice, evdev.
 
 ## Read first
 
@@ -33,9 +34,9 @@ sidetone + decoder -> practice scenarios. Python 3.11+, numpy, sounddevice, evde
 
 ## Testing
 
-Use `python -m pytest`, not bare `pytest` (a stale `~/.local/bin/pytest` may
-shadow the venv one). The `verify` skill covers tests plus dry runs; the
-`add-scenario` skill is the checklist for new scenarios.
+Run everything through uv: `uv run pytest`, `uv run python tools/dry_run.py ...`.
+`uv sync` after editing dependencies; commit `uv.lock`. The `verify` skill
+covers tests plus dry runs; the `add-scenario` skill is the checklist for new scenarios.
 
 ## Conventions
 

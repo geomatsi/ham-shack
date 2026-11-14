@@ -5,11 +5,15 @@ See `docs/PLAN.md` for the design and `docs/DECISIONS.md` for choices made along
 
 ## Install
 
+Managed with [uv](https://docs.astral.sh/uv/), Python 3.12 (`.python-version`).
+
 ```
-pip install -e '.[test]'
-pytest
-cwtrainer --help
+uv sync
+uv run pytest
+uv run cwtrainer --help
 ```
+
+The examples below omit `uv run`; prefix them, or activate `.venv`.
 
 ## Practice keyer
 

@@ -54,6 +54,16 @@ Choices made where `PLAN.md` was open or ambiguous.
 - The activator's sign-off and the next CQ are mixed into one prompt rather
   than asking the user to acknowledge.
 
+## Tooling: uv (2026-11-15)
+
+- Managed with uv, Python pinned to 3.12 in `.python-version`;
+  `requires-python >= 3.12`. `uv.lock` is committed.
+- pytest moved from the `test` extra to the `dev` dependency group, so plain
+  `uv sync` / `uv run` installs it.
+- Build backend is `uv_build` (flat layout via `module-root = ""`; `data/`
+  ships automatically). setuptools left `cwtrainer.egg-info` in the tree on
+  every editable install.
+
 ## Open: sidetone latency (postponed 2026-11-11)
 
 Extra dots while sending. Measured without the paddle: keyer thread lag

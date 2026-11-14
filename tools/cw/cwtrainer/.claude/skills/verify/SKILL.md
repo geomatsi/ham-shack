@@ -8,18 +8,18 @@ description: Run the cwtrainer checks - unit tests plus scripted dry runs of the
 From the `cwtrainer` directory:
 
 ```sh
-python -m pytest -q
+uv run pytest -q
 ```
 
 Then dry-run every scenario the change touches (all of them after changes to
 `session.py`, `grading.py`, `player.py` or `scenarios/base.py`):
 
 ```sh
-python tools/dry_run.py echo --both --count 4 --seed 1
-python tools/dry_run.py callsigns --ramp --count 8 --seed 1
-python tools/dry_run.py groups --charset mix --size 1-6 --count 4 --seed 1
-python tools/dry_run.py pota --mycall R3XYZ --agn --partial --pileup --p2p --count 4 --seed 5
-python tools/dry_run.py pota-hunter --mycall R3XYZ --agn --partial --busted --pileup --log --count 4 --seed 8
+uv run python tools/dry_run.py echo --both --count 4 --seed 1
+uv run python tools/dry_run.py callsigns --ramp --count 8 --seed 1
+uv run python tools/dry_run.py groups --charset mix --size 1-6 --count 4 --seed 1
+uv run python tools/dry_run.py pota --mycall R3XYZ --agn --partial --pileup --p2p --count 4 --seed 5
+uv run python tools/dry_run.py pota-hunter --mycall R3XYZ --agn --partial --busted --pileup --log --count 4 --seed 8
 ```
 
 `--error P` (default 0.15) corrupts that share of answers; `--error 0` for a
