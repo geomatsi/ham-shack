@@ -15,7 +15,7 @@ Then dry-run every scenario the change touches (all of them after changes to
 `session.py`, `grading.py`, `player.py` or `scenarios/base.py`):
 
 ```sh
-uv run python tools/dry_run.py echo --both --count 4 --seed 1
+uv run python tools/dry_run.py qso --both --count 4 --seed 1
 uv run python tools/dry_run.py callsigns --ramp --count 8 --seed 1
 uv run python tools/dry_run.py groups --charset mix --size 1-6 --count 4 --seed 1
 uv run python tools/dry_run.py sentences --level 300 --max-words 8 --count 4 --seed 1

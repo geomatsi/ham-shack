@@ -7,7 +7,8 @@ from cwtrainer.morse import unit
 from cwtrainer.paddle import ReplayPaddle
 from cwtrainer.player import MorsePlayer
 from cwtrainer.rig import Rig
-from cwtrainer.scenarios.echo import Echo, PromptMode
+from cwtrainer.scenarios.echo import PromptMode
+from cwtrainer.scenarios.qso import Qso
 from cwtrainer.session import SessionUI
 from cwtrainer.sidetone import NullSidetone
 from cwtrainer.stats import Stats
@@ -23,7 +24,7 @@ def send(text, wpm):
 
 
 def test_paddle_to_grade():
-    e = Echo(["UR RST 599"], ["X"], rng=random.Random(0))
+    e = Qso(["UR RST 599"], ["X"], rng=random.Random(0))
     e.PHRASE_RATIO = 1.0
     e.next_prompt()
     assert send("UR RST 5NN", 22) == "UR RST 5NN"
@@ -39,14 +40,14 @@ def test_session_live(tmp_path, capsys):
     script, end = paddle_script("TU 73", cfg.wpm, t0=0.1)
     second, _ = paddle_script("CQ", cfg.wpm, t0=end + 0.5)
     audio = NullSidetone()
-    echo = Echo(["TU 73", "CQ"], ["X"], PromptMode.BOTH, count=2, rng=random.Random(0))
-    echo.PHRASE_RATIO = 1.0
+    qso = Qso(["TU 73", "CQ"], ["X"], PromptMode.BOTH, count=2, rng=random.Random(0))
+    qso.PHRASE_RATIO = 1.0
     # make prompt order deterministic
     order = iter(["TU 73", "CQ"])
-    echo._pick = lambda: next(order)
+    qso._pick = lambda: next(order)
     stats = Stats(tmp_path / "s.json")
     with Rig(cfg, ReplayPaddle(script + second), audio) as rig:
-        ui = SessionUI(rig, echo, MorsePlayer(audio, 8000, 0.5, 0.005), stats, Decoder(cfg.wpm, answer_timeout=0.2))
+        ui = SessionUI(rig, qso, MorsePlayer(audio, 8000, 0.5, 0.005), stats, Decoder(cfg.wpm, answer_timeout=0.2))
         ui.run()
     assert [r.sent for r in ui.results] == ["TU 73", "CQ"]
     assert all(r.ok for r in ui.results)

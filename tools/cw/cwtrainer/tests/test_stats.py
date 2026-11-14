@@ -11,7 +11,7 @@ def res(expected, sent):
 
 def test_record_and_weak(tmp_path):
     st = Stats(tmp_path / "s.json")
-    st.start_session("echo", 20)
+    st.start_session("qso", 20)
     for _ in range(5):
         st.record(res("TNX", "TNK"))
     st.record(res("NN", "N"))
@@ -26,7 +26,7 @@ def test_record_and_weak(tmp_path):
 def test_persist(tmp_path):
     p = tmp_path / "sub" / "s.json"
     st = Stats(p)
-    st.start_session("echo", 22)
+    st.start_session("qso", 22)
     st.record(res("CQ", "CQ"))
     st.save()
     assert len(json.loads(p.read_text())["sessions"]) == 1  # in-progress session saved

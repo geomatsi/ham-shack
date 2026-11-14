@@ -2,11 +2,12 @@ import random
 
 from cwtrainer.morse import text_to_elements
 from cwtrainer.scenarios import SCENARIOS
-from cwtrainer.scenarios.echo import Echo, PromptMode, load_lines
+from cwtrainer.scenarios.echo import PromptMode, load_lines
+from cwtrainer.scenarios.qso import Qso
 
 
 def test_registered():
-    assert SCENARIOS["echo"] is Echo
+    assert SCENARIOS["qso"] is Qso
 
 
 def test_data_is_sendable():
@@ -20,12 +21,12 @@ def test_data_is_sendable():
 def test_modes():
     for mode, show, play in [(PromptMode.SHOW, True, False), (PromptMode.LISTEN, False, True),
                              (PromptMode.BOTH, True, True)]:
-        p = Echo(["CQ CQ"], ["TU"], mode, rng=random.Random(1)).next_prompt()
+        p = Qso(["CQ CQ"], ["TU"], mode, rng=random.Random(1)).next_prompt()
         assert (p.show_text, p.play_audio) == (show, play)
 
 
 def test_count_and_check():
-    e = Echo(["UR RST 599"], ["UR"], count=2, rng=random.Random(0))
+    e = Qso(["UR RST 599"], ["UR"], count=2, rng=random.Random(0))
     e.PHRASE_RATIO = 1.0
     assert not e.done()
     p = e.next_prompt()
@@ -38,14 +39,14 @@ def test_count_and_check():
 
 
 def test_endless():
-    e = Echo(["A", "B"], ["C"], count=0, rng=random.Random(0))
+    e = Qso(["A", "B"], ["C"], count=0, rng=random.Random(0))
     for _ in range(50):
         e.next_prompt()
     assert not e.done()
 
 
 def test_no_immediate_repeat():
-    e = Echo(["A", "B"], ["C"], count=0, rng=random.Random(3))
+    e = Qso(["A", "B"], ["C"], count=0, rng=random.Random(3))
     e.PHRASE_RATIO = 1.0
     seq = [e.next_prompt().text for _ in range(30)]
     assert all(a != b for a, b in zip(seq, seq[1:]))

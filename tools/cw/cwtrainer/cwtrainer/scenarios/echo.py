@@ -1,4 +1,4 @@
-"""Echo: send back a phrase shown and/or played."""
+"""Echo drills: show and/or play a prompt, grade what is sent back."""
 
 from __future__ import annotations
 
@@ -8,9 +8,7 @@ from collections.abc import Mapping
 from enum import Enum
 from importlib.resources import files
 
-from cwtrainer.config import Config
-from cwtrainer.grading import RST_EQUIVALENTS, grade
-from cwtrainer.scenarios import register
+from cwtrainer.grading import grade
 from cwtrainer.scenarios.base import Prompt, Result
 
 
@@ -69,28 +67,3 @@ class EchoBase:
 
     def done(self) -> bool:
         return self.count > 0 and self.n >= self.count
-
-
-@register
-class Echo(EchoBase):
-    name = "echo"
-    help = "send back QSO phrases and words"
-    equivalents = RST_EQUIVALENTS
-
-    PHRASE_RATIO = 0.6
-
-    def __init__(self, phrases: list[str], words: list[str], mode: PromptMode = PromptMode.SHOW,
-                 count: int = 10, rng: random.Random | None = None) -> None:
-        super().__init__(mode, count, rng)
-        self.phrases = phrases
-        self.words = words
-
-    @classmethod
-    def from_args(cls, args: argparse.Namespace, cfg: Config) -> Echo:
-        return cls(load_lines("phrases.txt"), load_lines("words.txt"), args.prompt_mode,
-                   args.count, random.Random(args.seed))
-
-    def _pick(self) -> str:
-        if self.rng.random() < self.PHRASE_RATIO:
-            return self.rng.choice(self.phrases)
-        return " ".join(self.rng.sample(self.words, min(self.rng.randint(1, 2), len(self.words))))

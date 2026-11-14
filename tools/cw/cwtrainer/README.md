@@ -28,10 +28,10 @@ What you send is decoded live; a new line starts after `--answer-timeout`
 seconds of silence. Gaps of 2 units split characters, 5 units split words,
 six or more dits decode as `<HH>`, an unknown pattern as `*`.
 
-## Echo
+## QSO
 
 ```
-cwtrainer --device /dev/input/eventX echo [--show | --listen | --both] [--count 10]
+cwtrainer --device /dev/input/eventX qso [--show | --listen | --both] [--count 10]
 ```
 
 Send back each prompt, a QSO phrase or random words. The answer ends after
@@ -46,7 +46,7 @@ the session. Per-character stats go to `~/.local/share/cwtrainer/stats.json`.
 cwtrainer --device /dev/input/eventX callsigns [--listen] [--count 20] [--ramp]
 ```
 
-Echo with generated callsigns: 1x2 to 2x3 patterns on real prefixes, sometimes
+Like `qso`, with generated callsigns: 1x2 to 2x3 patterns on real prefixes, sometimes
 a digit prefix (`9A`, `S5`, `--digit-prefix`) or a `/P` `/M` `/QRP` suffix
 (`--portable`). `--ramp` starts with short calls and moves up a level when
 the last 5 average 95%, down below 60%.

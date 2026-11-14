@@ -1,4 +1,4 @@
-# Random words for Echo: common English and CW abbreviations.
+# Random words for QSO: common English and CW abbreviations.
 
 # Hand-written
 THE

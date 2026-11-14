@@ -1,4 +1,4 @@
-# Echo prompts, one per line. <AR> <SK> <KN> <BT> <BK> <HH> are prosigns.
+# QSO prompts, one per line. <AR> <SK> <KN> <BT> <BK> <HH> are prosigns.
 # Picked uniformly; single elements are about a third of the lines.
 
 # Hand-written
